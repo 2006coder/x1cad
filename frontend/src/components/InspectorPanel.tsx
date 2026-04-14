@@ -138,11 +138,13 @@ export function InspectorPanel({
   const downloadActionLabel =
     modelStatus.active_operation?.kind === 'download' && modelStatus.active_operation.state === 'running'
       ? 'Downloading models...'
-      : modelStatus.shape_model_downloaded && systemStatus.ai_capability.mode === 'FULL' && modelStatus.paint_model_downloaded
-        ? 'Models ready'
-        : modelStatus.shape_model_downloaded
-          ? 'Download paint model'
-          : `Download ${modelStatus.total_size_gb.toFixed(0)} GB`
+      : !modelStatus.shape_model_downloaded
+        ? 'Download AI stack'
+        : !modelStatus.text_to_3d_supported
+          ? 'Download prompt bridge'
+          : systemStatus.ai_capability.mode === 'FULL' && !modelStatus.paint_model_downloaded
+            ? 'Download paint model'
+            : 'Models ready'
 
   const selectionTriangles = selectedObject ? estimateSceneObjectTriangles(selectedObject) : 0
   const currentResult = aiGeneration.jobStatus?.result ?? null
@@ -151,7 +153,9 @@ export function InspectorPanel({
     aiGeneration.submitting ||
     !modelStatus.runtime_env_ready ||
     !modelStatus.shape_model_downloaded ||
-    (aiGeneration.request.mode === 'text' && !modelStatus.text_to_3d_supported)
+    (aiGeneration.request.mode === 'text' && !modelStatus.text_to_3d_supported) ||
+    (aiGeneration.request.mode === 'image' && !modelStatus.image_to_3d_supported) ||
+    (aiGeneration.request.mode === 'hybrid' && !modelStatus.hybrid_supported)
 
   async function handleImageFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -465,7 +469,7 @@ export function InspectorPanel({
 
           {!modelStatus.text_to_3d_supported ? (
             <div className="sidebar-note">
-              The current local Hunyuan integration is image-guided. Use an uploaded sketch, concept render, or viewport screenshot with an optional prompt for better steering.
+              Download the prompt bridge to unlock prompt-only generation and true prompt-guided hybrid refinement. Until then, image mode remains fully available.
             </div>
           ) : null}
 
@@ -527,7 +531,7 @@ export function InspectorPanel({
               />
             ) : (
               <div className="reference-preview reference-preview--empty">
-                Drop in a sketch, concept image, or viewport screenshot to drive the local shape model.
+                Drop in a sketch, concept image, or viewport screenshot to drive the local shape model. In hybrid mode, x1cad can refine it with your prompt before the 3D pass.
               </div>
             )}
 

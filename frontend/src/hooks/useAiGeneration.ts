@@ -12,7 +12,7 @@ const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const initialRequest: GenerationRequest = {
   prompt: 'Compact desktop enclosure with rounded edges and mounting tabs',
-  mode: 'hybrid',
+  mode: 'image',
   generate_texture: false,
   resolution: 384,
   reference_image: null,
@@ -57,7 +57,17 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
       return
     }
 
-    if (modelStatus.reference_image_required && !request.reference_image?.trim()) {
+    if (request.mode === 'text' && !modelStatus.text_to_3d_supported) {
+      setError('Download the prompt bridge before starting prompt-only generation.')
+      return
+    }
+
+    if (request.mode === 'hybrid' && !modelStatus.hybrid_supported) {
+      setError('Download the prompt bridge before starting prompt-guided hybrid generation.')
+      return
+    }
+
+    if (request.mode !== 'text' && !request.reference_image?.trim()) {
       setError(
         'Add a reference image, sketch, or viewport screenshot before starting the local Hunyuan pipeline.',
       )
@@ -100,9 +110,10 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
       setSubmitting(false)
     }
   }, [
-    modelStatus.reference_image_required,
+    modelStatus.hybrid_supported,
     modelStatus.runtime_env_ready,
     modelStatus.shape_model_downloaded,
+    modelStatus.text_to_3d_supported,
     request,
     systemStatus.ai_capability.enabled,
     systemStatus.ai_capability.reason,

@@ -30,6 +30,7 @@ REPO_URL = "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git"
 REALESRGAN_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 )
+ZIMAGE_MODEL_DIR = "z-image-turbo"
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 BACKEND_DIR = ROOT_DIR / "backend"
@@ -304,6 +305,7 @@ class HunyuanRuntimeManager:
         env_ready = bool(runtime_state.get("runtime_env_ready")) and _runtime_python().exists()
         shape_downloaded = (MODELS_DIR / "hunyuan3d-dit-v2-1").exists()
         paint_downloaded = (MODELS_DIR / "hunyuan3d-paintpbr-v2-1").exists()
+        zimage_downloaded = (MODELS_DIR / ZIMAGE_MODEL_DIR).exists()
         realesrgan_ready = (REPO_DIR / "hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth").exists()
         custom_rasterizer_ready = any(
             (REPO_DIR / "hy3dpaint" / "custom_rasterizer").glob("custom_rasterizer_kernel*.pyd")
@@ -317,8 +319,16 @@ class HunyuanRuntimeManager:
 
         notes = [
             "x1cad runs Tencent Hunyuan3D 2.1 directly through a local managed runtime rather than Tencent's demo API server.",
-            "The current upstream open workflow is image-guided. For best results use an uploaded concept image, sketch, or viewport screenshot.",
+            "x1cad loads one model stage at a time to stay inside a workstation-friendly memory budget.",
         ]
+        if zimage_downloaded:
+            notes.append(
+                "Prompt-only generation is enabled through Tongyi-MAI Z-Image-Turbo, which creates a guide image before x1cad hands off to Hunyuan3D."
+            )
+        else:
+            notes.append(
+                "Reference images still produce the most controllable results. Prompt-only mode becomes available after the optional Z-Image-Turbo bridge is downloaded."
+            )
         if runtime_state.get("warning"):
             notes.append(str(runtime_state["warning"]))
         if paint_downloaded and not texture_pipeline_ready:
@@ -327,7 +337,7 @@ class HunyuanRuntimeManager:
             )
 
         detail = (
-            "Local Hunyuan runtime is ready for direct image-guided generation."
+            "Local AI runtime is ready for image-to-3D, prompt-to-image-to-3D, and prompt-guided hybrid generation."
             if repo_present and env_ready and shape_downloaded
             else "Prepare the local Hunyuan runtime, then download the model weights to unlock real generation."
         )
@@ -338,10 +348,10 @@ class HunyuanRuntimeManager:
             shape_model_downloaded=shape_downloaded,
             paint_model_downloaded=paint_downloaded,
             texture_pipeline_ready=texture_pipeline_ready,
-            reference_image_required=True,
-            text_to_3d_supported=False,
-            image_to_3d_supported=True,
-            hybrid_supported=True,
+            reference_image_required=not zimage_downloaded,
+            text_to_3d_supported=zimage_downloaded and shape_downloaded and env_ready,
+            image_to_3d_supported=shape_downloaded and env_ready,
+            hybrid_supported=zimage_downloaded and shape_downloaded and env_ready,
             total_size_gb=12.0,
             detail=detail,
             repo_path=str(REPO_DIR),
@@ -404,6 +414,15 @@ class HunyuanRuntimeManager:
                     "torchaudio==2.5.1",
                     "--index-url",
                     "https://download.pytorch.org/whl/cu124",
+                ]
+            )
+            _run_checked(
+                [
+                    str(runtime_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "git+https://github.com/huggingface/diffusers",
                 ]
             )
             _run_checked(
@@ -490,10 +509,14 @@ class HunyuanRuntimeManager:
         if not self._begin_operation("download"):
             return self.status()
 
-        Thread(target=self._run_download_models, kwargs={"include_paint": include_paint}, daemon=True).start()
+        Thread(
+            target=self._run_download_models,
+            kwargs={"include_paint": include_paint, "include_zimage": True},
+            daemon=True,
+        ).start()
         return self.status()
 
-    def _run_download_models(self, *, include_paint: bool) -> None:
+    def _run_download_models(self, *, include_paint: bool, include_zimage: bool) -> None:
         runtime_python = _runtime_python()
         try:
             self._update_operation(
@@ -509,16 +532,18 @@ class HunyuanRuntimeManager:
             ]
             if include_paint:
                 command.append("--include-paint")
+            if include_zimage:
+                command.append("--include-zimage")
 
             self._update_operation(
                 progress=44,
                 stage="Downloading weights",
-                message="Fetching the local Hunyuan3D model snapshots from Hugging Face.",
+                message="Fetching the local Hunyuan3D and prompt-bridge model snapshots from Hugging Face.",
             )
             _run_checked(command, cwd=ROOT_DIR)
             self._finish_operation(
                 success=True,
-                message="Model downloads completed. x1cad can now launch real local generation jobs.",
+                message="Model downloads completed. x1cad can now launch image-guided and prompt-bootstrapped generation jobs.",
             )
         except Exception as exc:  # noqa: BLE001
             self._finish_operation(
@@ -533,12 +558,22 @@ class HunyuanRuntimeManager:
             raise HTTPException(status_code=409, detail="Install the local Hunyuan runtime before generating.")
         if not status.shape_model_downloaded:
             raise HTTPException(status_code=409, detail="Download the shape model before generating.")
-        if not request.reference_image:
+        if request.mode == "text" and not status.text_to_3d_supported:
+            raise HTTPException(
+                status_code=409,
+                detail="Download the prompt bridge before starting prompt-only generation.",
+            )
+        if request.mode == "hybrid" and not status.hybrid_supported:
+            raise HTTPException(
+                status_code=409,
+                detail="Download the prompt bridge before using prompt-guided hybrid generation.",
+            )
+        if request.mode in {"image", "hybrid"} and not request.reference_image:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "The current upstream Hunyuan3D 2.1 integration is image-guided. "
-                    "Add a reference image, sketch, or viewport screenshot before generating."
+                    "Add a reference image, sketch, or viewport screenshot before generating. "
+                    "Prompt-only mode is available separately through the prompt bridge."
                 ),
             )
 
@@ -614,6 +649,7 @@ class HunyuanRuntimeManager:
                 "requested_texture": job.request.generate_texture,
                 "resolution": job.request.resolution,
                 "reference_image": job.request.reference_image,
+                "text_to_image_enabled": status.text_to_3d_supported,
                 "paths": paths,
                 "texture_pipeline_ready": status.texture_pipeline_ready,
             },

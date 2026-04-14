@@ -10,6 +10,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--include-paint", action="store_true")
+    parser.add_argument("--include-zimage", action="store_true")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -33,6 +34,16 @@ def main() -> None:
         resume_download=True,
         max_workers=4,
     )
+
+    if args.include_zimage:
+        snapshot_download(
+            repo_id="Tongyi-MAI/Z-Image-Turbo",
+            repo_type="model",
+            local_dir=str(output_dir / "z-image-turbo"),
+            local_dir_use_symlinks=False,
+            resume_download=True,
+            max_workers=4,
+        )
 
 
 if __name__ == "__main__":

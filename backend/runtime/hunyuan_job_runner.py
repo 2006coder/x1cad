@@ -135,6 +135,153 @@ def cleanup_cuda() -> None:
     gc.collect()
 
 
+def merge_warnings(existing: str | None, new_warning: str | None) -> str | None:
+    if not new_warning:
+        return existing
+    if not existing:
+        return new_warning
+    return f"{existing} {new_warning}"
+
+
+def square_resolution(target_resolution: int) -> int:
+    return {256: 512, 384: 768, 512: 1024}.get(target_resolution, 768)
+
+
+def normalize_prompt(prompt: str) -> str:
+    base = prompt.strip()
+    if not base:
+        return "Single centered industrial design object, isolated on a clean background."
+    return (
+        f"{base}. Single centered object, isolated on a clean background, "
+        "clear silhouette, product concept render."
+    )
+
+
+def fit_image_to_square(image: Image.Image, size: int) -> Image.Image:
+    image = image.convert("RGBA")
+    contained = image.copy()
+    contained.thumbnail((size, size), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    offset = ((size - contained.width) // 2, (size - contained.height) // 2)
+    canvas.paste(contained, offset, contained if contained.mode == "RGBA" else None)
+    return canvas
+
+
+def preferred_torch_dtype(torch) -> Any:
+    if torch.cuda.is_available() and hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
+def use_cpu_offload_for_bridge(torch) -> bool:
+    if not torch.cuda.is_available():
+        return False
+
+    total_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+    return total_memory_gb < 16
+
+
+def build_seeded_generator(torch) -> Any:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.Generator(device).manual_seed(42)
+
+
+def materialize_text_or_hybrid_reference(
+    *,
+    prompt: str,
+    mode: str,
+    source_image_path: Path | None,
+    models_path: Path,
+    output_path: Path,
+    resolution: int,
+    status_path: Path,
+    job_id: str,
+    started_at: float,
+) -> Path:
+    import torch
+    from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
+
+    guide_size = square_resolution(resolution)
+    dtype = preferred_torch_dtype(torch)
+    generator = build_seeded_generator(torch)
+    progress_message = (
+        "Loading Z-Image-Turbo to turn the prompt into a clean guide image."
+        if mode == "text"
+        else "Loading Z-Image-Turbo to refine the reference image with the prompt before shape generation."
+    )
+
+    progress(
+        status_path=status_path,
+        job_id=job_id,
+        started_at=started_at,
+        state="running",
+        stage="Loading guide model",
+        message=progress_message,
+        progress_value=18,
+    )
+
+    model_path = str(models_path / "z-image-turbo")
+    pipeline = None
+    try:
+        if mode == "text":
+            pipeline = ZImagePipeline.from_pretrained(model_path, torch_dtype=dtype)
+        else:
+            pipeline = ZImageImg2ImgPipeline.from_pretrained(model_path, torch_dtype=dtype)
+
+        if use_cpu_offload_for_bridge(torch):
+            pipeline.enable_model_cpu_offload()
+        else:
+            pipeline.to("cuda")
+
+        if hasattr(pipeline, "enable_attention_slicing"):
+            pipeline.enable_attention_slicing("max")
+
+        prompt_text = normalize_prompt(prompt)
+        progress(
+            status_path=status_path,
+            job_id=job_id,
+            started_at=started_at,
+            state="running",
+            stage="Generating guide image",
+            message=(
+                "Synthesizing a guide image from the prompt for Hunyuan3D."
+                if mode == "text"
+                else "Blending the prompt into the reference image to steer the 3D result."
+            ),
+            progress_value=30,
+        )
+
+        if mode == "text":
+            image = pipeline(
+                prompt_text,
+                height=guide_size,
+                width=guide_size,
+                num_inference_steps=9,
+                guidance_scale=0.0,
+                generator=generator,
+            ).images[0]
+        else:
+            if source_image_path is None:
+                raise ValueError("Hybrid mode requires a source reference image.")
+            init_image = fit_image_to_square(Image.open(source_image_path), guide_size).convert("RGB")
+            image = pipeline(
+                prompt_text,
+                image=init_image,
+                strength=0.55,
+                num_inference_steps=9,
+                guidance_scale=0.0,
+                generator=generator,
+            ).images[0]
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(output_path)
+        return output_path
+    finally:
+        if pipeline is not None:
+            del pipeline
+        cleanup_cuda()
+
+
 def quick_convert_with_obj2gltf(create_glb_with_pbr_materials, obj_path: Path, glb_path: Path) -> None:
     textures = {
         "albedo": str(obj_path).replace(".obj", ".jpg"),
@@ -168,14 +315,67 @@ def main() -> None:
         started_at=started_at,
         state="running",
         stage="Preparing input",
-        message="Normalizing the reference image for local shape generation.",
+        message="Preparing the local guide image for shape generation.",
         progress_value=8,
     )
+    guide_image_path = output_dir / "reference.png"
+    original_reference_path: Path | None = None
+    if config.get("reference_image"):
+        original_reference_path = materialize_reference_image(
+            config["reference_image"],
+            output_dir / "reference-original.png",
+        )
 
-    reference_image_path = materialize_reference_image(
-        config["reference_image"],
-        output_dir / "reference.png",
-    )
+    warning: str | None = None
+    mode = config.get("mode", "text")
+
+    if mode == "text":
+        if not config.get("text_to_image_enabled", False):
+            raise RuntimeError(
+                "Prompt-only generation is not available until the prompt bridge model is downloaded."
+            )
+        reference_image_path = materialize_text_or_hybrid_reference(
+            prompt=config["prompt"],
+            mode="text",
+            source_image_path=None,
+            models_path=models_path,
+            output_path=guide_image_path,
+            resolution=config["resolution"],
+            status_path=status_path,
+            job_id=job_id,
+            started_at=started_at,
+        )
+    elif mode == "hybrid":
+        if original_reference_path is None:
+            raise RuntimeError("Hybrid generation requires a reference image.")
+        if config.get("text_to_image_enabled", False):
+            try:
+                reference_image_path = materialize_text_or_hybrid_reference(
+                    prompt=config["prompt"],
+                    mode="hybrid",
+                    source_image_path=original_reference_path,
+                    models_path=models_path,
+                    output_path=guide_image_path,
+                    resolution=config["resolution"],
+                    status_path=status_path,
+                    job_id=job_id,
+                    started_at=started_at,
+                )
+            except Exception as exc:  # noqa: BLE001
+                reference_image_path = original_reference_path
+                warning = merge_warnings(
+                    warning,
+                    (
+                        "Prompt-guided image refinement could not complete, so x1cad continued with the original reference image. "
+                        f"Reason: {exc}"
+                    ),
+                )
+        else:
+            reference_image_path = original_reference_path
+    else:
+        if original_reference_path is None:
+            raise RuntimeError("Image-guided generation requires a reference image.")
+        reference_image_path = original_reference_path
 
     try:
         from torchvision_fix import apply_fix
@@ -200,8 +400,8 @@ def main() -> None:
         started_at=started_at,
         state="running",
         stage="Loading shape model",
-        message="Loading Hunyuan3D-Shape into GPU memory.",
-        progress_value=18,
+        message="Loading Hunyuan3D-Shape after the guide stage has been fully unloaded.",
+        progress_value=46 if mode in {"text", "hybrid"} else 18,
     )
 
     try:
@@ -215,25 +415,32 @@ def main() -> None:
         started_at=started_at,
         state="running",
         stage="Generating shape",
-        message="Running image-guided shape diffusion.",
-        progress_value=38,
+        message=(
+            "Running prompt-bootstrapped shape diffusion."
+            if mode in {"text", "hybrid"}
+            else "Running image-guided shape diffusion."
+        ),
+        progress_value=62 if mode in {"text", "hybrid"} else 42,
     )
 
     mesh = shape_pipeline(image=image)[0]
     shape_glb_path = output_dir / "shape.glb"
     mesh.export(shape_glb_path)
+    del image
     del mesh
     del shape_pipeline
     cleanup_cuda()
 
     final_path = shape_glb_path
-    warning: str | None = None
     output_mode = "shape"
 
     if config.get("requested_texture") and not config["generate_texture"]:
-        warning = (
-            "Texture generation was requested, but the local texture pipeline is not ready yet. "
-            "x1cad saved the generated shape so you can keep working."
+        warning = merge_warnings(
+            warning,
+            (
+                "Texture generation was requested, but the local texture pipeline is not ready yet. "
+                "x1cad saved the generated shape so you can keep working."
+            ),
         )
 
     if config["generate_texture"] and config.get("texture_pipeline_ready", False):
@@ -245,7 +452,7 @@ def main() -> None:
                 state="running",
                 stage="Loading paint model",
                 message="Shape model unloaded. Loading the PBR paint stage with reduced view count.",
-                progress_value=58,
+                progress_value=64,
             )
 
             from textureGenPipeline import Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
@@ -268,7 +475,7 @@ def main() -> None:
                 state="running",
                 stage="Painting materials",
                 message="Generating multiview PBR textures, then baking them back to the mesh.",
-                progress_value=76,
+                progress_value=84,
             )
 
             paint_pipeline(
@@ -284,9 +491,12 @@ def main() -> None:
             cleanup_cuda()
         except Exception as exc:  # noqa: BLE001
             cleanup_cuda()
-            warning = (
-                "Texture generation could not complete in the current runtime, so x1cad saved the untextured shape instead. "
-                f"Reason: {exc}"
+            warning = merge_warnings(
+                warning,
+                (
+                    "Texture generation could not complete in the current runtime, so x1cad saved the untextured shape instead. "
+                    f"Reason: {exc}"
+                ),
             )
 
     if final_path != asset_path:

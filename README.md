@@ -10,8 +10,8 @@ Local-first browser CAD workspace built from `instructions.md`, with manual CAD 
 - Dedicated local Hunyuan runtime manager:
   - installs a separate Python virtual environment
   - clones the official Tencent repository locally
-  - downloads model weights into a local cache
-  - runs shape and paint stages in sequence
+  - downloads model weights into a local cache, including the optional Z-Image prompt bridge
+  - runs prompt bridge, shape, and paint stages in sequence
   - unloads each stage after it finishes
 - Actual generated GLB assets can be added back into the CAD scene as transformable mesh objects
 
@@ -23,15 +23,16 @@ Current production path:
 
 1. x1cad backend detects GPU capability.
 2. User installs the local AI runtime.
-3. User downloads the Hunyuan weights locally.
-4. User supplies a reference image, sketch, or concept render.
-5. x1cad loads the shape model, generates a mesh, unloads it completely.
-6. If texture generation is requested and the native paint extensions are ready, x1cad loads the paint model, textures the mesh, then unloads it completely.
-7. The resulting GLB is inserted back into the CAD workspace as a local mesh asset.
+3. User downloads the Hunyuan weights and the Z-Image-Turbo bridge locally.
+4. For prompt-only jobs, x1cad first loads Z-Image-Turbo to synthesize a clean guide image, then fully unloads it.
+5. For hybrid jobs, x1cad can refine the reference image with the prompt through Z-Image-Turbo, then fully unload it.
+6. x1cad loads the shape model, generates a mesh, and unloads it completely.
+7. If texture generation is requested and the native paint extensions are ready, x1cad loads the paint model, textures the mesh, then unloads it completely.
+8. The resulting GLB is inserted back into the CAD workspace as a local mesh asset.
 
 ## Important current note
 
-The upstream Hunyuan3D 2.1 open workflow is image-guided in this integration. The UI is designed around image or hybrid input right now. Prompt-only generation can be added later through an optional text-to-image bootstrap stage, but it is not the current default path.
+Prompt-only and hybrid prompt-guided generation now use Z-Image-Turbo as a local bootstrap stage. This keeps x1cad self-hosted while still respecting the one-model-at-a-time memory budget from `instructions.md`.
 
 ## Run locally on this PC
 
