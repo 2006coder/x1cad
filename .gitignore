@@ -7,11 +7,15 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+.ai-venv/
 
 backend/.ruff_cache/
 backend/.coverage
 backend/htmlcov/
+backend/data/
 
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+third_party/

@@ -8,6 +8,8 @@ export type PrimitiveType =
   | 'capsule'
   | 'prism'
   | 'pyramid'
+export type SceneObjectType = PrimitiveType | 'generatedMesh'
+export type SceneObjectKind = 'primitive' | 'mesh'
 
 export type ActiveTool = 'select' | 'move' | 'rotate' | 'scale'
 export type CoordinateSpace = 'world' | 'local'
@@ -44,7 +46,8 @@ export interface PrimitiveDefinition {
 
 export interface SceneObject {
   id: string
-  type: PrimitiveType
+  kind: SceneObjectKind
+  type: SceneObjectType
   name: string
   color: string
   params: PrimitiveParams
@@ -55,4 +58,24 @@ export interface SceneObject {
   locked: boolean
   source: 'manual' | 'ai'
   generationPrompt?: string
+  meshAssetId?: string
+  meshVertices?: number
+  meshFaces?: number
+  meshOutputMode?: 'shape' | 'shape_texture'
+  meshWarning?: string | null
+}
+
+export function isPrimitiveObject(object: SceneObject): object is SceneObject & {
+  kind: 'primitive'
+  type: PrimitiveType
+} {
+  return object.kind === 'primitive'
+}
+
+export function isMeshObject(object: SceneObject): object is SceneObject & {
+  kind: 'mesh'
+  type: 'generatedMesh'
+  meshAssetId: string
+} {
+  return object.kind === 'mesh' && object.type === 'generatedMesh' && Boolean(object.meshAssetId)
 }

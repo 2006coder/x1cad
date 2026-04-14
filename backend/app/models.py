@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 
 
 AiMode = Literal["DISABLED", "SHAPE_ONLY", "FULL"]
-JobState = Literal["queued", "running", "completed", "cancelled"]
+JobState = Literal["queued", "running", "completed", "cancelled", "failed"]
+OperationKind = Literal["install", "download"]
+OperationState = Literal["running", "completed", "failed"]
 
 
 class MemoryStatus(BaseModel):
@@ -58,10 +60,23 @@ class HealthStatus(BaseModel):
 
 
 class ModelStatus(BaseModel):
+    runtime_repo_present: bool
+    runtime_env_ready: bool
     shape_model_downloaded: bool
     paint_model_downloaded: bool
+    texture_pipeline_ready: bool
+    reference_image_required: bool
+    text_to_3d_supported: bool
+    image_to_3d_supported: bool
+    hybrid_supported: bool
     total_size_gb: float
     detail: str
+    repo_path: str
+    env_path: str
+    models_path: str
+    outputs_path: str
+    notes: list[str] = Field(default_factory=list)
+    active_operation: "RuntimeOperationStatus | None" = None
 
 
 class GenerationRequest(BaseModel):
@@ -97,6 +112,11 @@ class GenerationResult(BaseModel):
     ]
     suggested_params: dict[str, float] = Field(default_factory=dict)
     suggested_color: str
+    artifact_id: str
+    asset_url: str
+    download_url: str
+    runtime: Literal["hunyuan3d-2.1"] = "hunyuan3d-2.1"
+    warning: str | None = None
 
 
 class JobStatus(BaseModel):
@@ -110,3 +130,18 @@ class JobStatus(BaseModel):
     ram_gb_used: float | None = None
     message: str
     result: GenerationResult | None = None
+    error: str | None = None
+
+
+class RuntimeOperationStatus(BaseModel):
+    kind: OperationKind
+    state: OperationState
+    progress: int = Field(ge=0, le=100)
+    stage: str
+    message: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+
+
+ModelStatus.model_rebuild()

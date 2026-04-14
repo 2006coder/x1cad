@@ -20,7 +20,9 @@ export function SceneTree() {
     }
 
     return sceneObjects.filter((object) =>
-      `${object.name} ${object.type} ${object.source}`.toLowerCase().includes(normalizedQuery),
+      `${object.name} ${object.type} ${object.kind} ${object.source}`
+        .toLowerCase()
+        .includes(normalizedQuery),
     )
   }, [deferredQuery, sceneObjects])
 
@@ -48,11 +50,14 @@ export function SceneTree() {
             className={`scene-row ${selectedObjectId === object.id ? 'is-selected' : ''}`}
           >
             <button className="scene-row__main" onClick={() => selectObject(object.id)} type="button">
-              <span className={`swatch ${object.hidden ? 'swatch--muted' : ''}`} style={{ backgroundColor: object.color }} />
+              <span
+                className={`swatch ${object.hidden ? 'swatch--muted' : ''}`}
+                style={{ backgroundColor: object.color }}
+              />
               <span className="scene-row__copy">
                 <strong>{object.name}</strong>
                 <small>
-                  {object.type} • {object.source}
+                  {object.kind === 'mesh' ? 'mesh' : object.type} | {object.source}
                 </small>
               </span>
             </button>

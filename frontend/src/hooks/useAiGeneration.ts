@@ -12,7 +12,7 @@ const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const initialRequest: GenerationRequest = {
   prompt: 'Compact desktop enclosure with rounded edges and mounting tabs',
-  mode: 'text',
+  mode: 'hybrid',
   generate_texture: false,
   resolution: 384,
   reference_image: null,
@@ -47,13 +47,20 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
       return
     }
 
+    if (!modelStatus.runtime_env_ready) {
+      setError('Install the local Hunyuan runtime before starting generation.')
+      return
+    }
+
     if (!modelStatus.shape_model_downloaded) {
       setError('Download the local AI models before starting generation.')
       return
     }
 
-    if (request.mode !== 'text' && !request.reference_image?.trim()) {
-      setError('Add a reference image URL or data URI before using image-guided generation.')
+    if (modelStatus.reference_image_required && !request.reference_image?.trim()) {
+      setError(
+        'Add a reference image, sketch, or viewport screenshot before starting the local Hunyuan pipeline.',
+      )
       return
     }
 
@@ -85,6 +92,7 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
         ram_gb_used: null,
         message: 'Job accepted by the local backend.',
         result: null,
+        error: null,
       })
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Generation failed.')
@@ -92,6 +100,8 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
       setSubmitting(false)
     }
   }, [
+    modelStatus.reference_image_required,
+    modelStatus.runtime_env_ready,
     modelStatus.shape_model_downloaded,
     request,
     systemStatus.ai_capability.enabled,
@@ -125,6 +135,8 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
         setJobStatus(payload)
         if (payload.state === 'completed') {
           recordCompletion(payload)
+        } else if (payload.state === 'failed') {
+          setError(payload.error ?? payload.message)
         }
       } catch (pollError) {
         setError(pollError instanceof Error ? pollError.message : 'Unable to refresh generation.')

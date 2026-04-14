@@ -1,5 +1,12 @@
 import type { GenerationResult } from '../types/system'
-import type { PrimitiveDefinition, PrimitiveParams, PrimitiveType, SceneObject } from '../types/cad'
+import {
+  isMeshObject,
+  isPrimitiveObject,
+  type PrimitiveDefinition,
+  type PrimitiveParams,
+  type PrimitiveType,
+  type SceneObject,
+} from '../types/cad'
 
 export const primitiveCatalog: PrimitiveDefinition[] = [
   {
@@ -186,6 +193,18 @@ export function estimateTriangleCount(type: PrimitiveType, params: PrimitivePara
   }
 }
 
+export function estimateSceneObjectTriangles(object: SceneObject): number {
+  if (isMeshObject(object)) {
+    return object.meshFaces ?? 0
+  }
+
+  if (isPrimitiveObject(object)) {
+    return estimateTriangleCount(object.type, object.params)
+  }
+
+  return 0
+}
+
 function groundOffset(type: PrimitiveType, params: PrimitiveParams) {
   switch (type) {
     case 'box':
@@ -220,6 +239,7 @@ export function createSceneObject(type: PrimitiveType, existingCount: number): S
 
   return {
     id: `${type}-${crypto.randomUUID()}`,
+    kind: 'primitive',
     type,
     name: `${definition.label} ${existingCount + 1}`,
     color: definition.accent,
@@ -237,16 +257,25 @@ export function createSceneObjectFromAiResult(
   result: GenerationResult,
   existingCount: number,
 ): SceneObject {
-  const nextObject = createSceneObject(result.suggested_primitive, existingCount)
-
   return {
-    ...nextObject,
+    id: `generatedMesh-${crypto.randomUUID()}`,
+    kind: 'mesh',
+    type: 'generatedMesh',
     name: result.preview_name,
     color: result.suggested_color,
-    params: { ...nextObject.params, ...result.suggested_params },
-    position: [0, groundOffset(result.suggested_primitive, result.suggested_params), 0],
+    params: {},
+    position: [0, 12 + existingCount * 0.2, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    hidden: false,
+    locked: false,
     source: 'ai',
     generationPrompt: result.summary,
+    meshAssetId: result.artifact_id,
+    meshVertices: result.vertices,
+    meshFaces: result.faces,
+    meshOutputMode: result.output_mode,
+    meshWarning: result.warning ?? null,
   }
 }
 

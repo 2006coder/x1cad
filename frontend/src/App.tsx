@@ -19,6 +19,7 @@ function App() {
     loading,
     error,
     refresh,
+    installRuntime,
     downloadModels,
     backendOnline,
   } = useSystemStatus()
@@ -38,6 +39,7 @@ function App() {
           backendOnline={backendOnline}
           downloadModels={downloadModels}
           error={error}
+          installRuntime={installRuntime}
           loading={loading}
           modelStatus={modelStatus}
           refreshStatus={refresh}

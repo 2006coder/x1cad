@@ -45,10 +45,23 @@ export interface SystemStatus {
 }
 
 export interface ModelStatus {
+  runtime_repo_present: boolean
+  runtime_env_ready: boolean
   shape_model_downloaded: boolean
   paint_model_downloaded: boolean
+  texture_pipeline_ready: boolean
+  reference_image_required: boolean
+  text_to_3d_supported: boolean
+  image_to_3d_supported: boolean
+  hybrid_supported: boolean
   total_size_gb: number
   detail: string
+  repo_path: string
+  env_path: string
+  models_path: string
+  outputs_path: string
+  notes: string[]
+  active_operation: RuntimeOperationStatus | null
 }
 
 export interface GenerationRequest {
@@ -74,11 +87,16 @@ export interface GenerationResult {
   suggested_primitive: PrimitiveType
   suggested_params: PrimitiveParams
   suggested_color: string
+  artifact_id: string
+  asset_url: string
+  download_url: string
+  runtime: 'hunyuan3d-2.1'
+  warning: string | null
 }
 
 export interface JobStatus {
   job_id: string
-  state: 'queued' | 'running' | 'completed' | 'cancelled'
+  state: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed'
   progress: number
   stage: string
   elapsed_seconds: number
@@ -87,4 +105,16 @@ export interface JobStatus {
   ram_gb_used: number | null
   message: string
   result: GenerationResult | null
+  error: string | null
+}
+
+export interface RuntimeOperationStatus {
+  kind: 'install' | 'download'
+  state: 'running' | 'completed' | 'failed'
+  progress: number
+  stage: string
+  message: string
+  started_at: string | null
+  finished_at: string | null
+  error: string | null
 }

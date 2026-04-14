@@ -24,10 +24,23 @@ const fallbackSystemStatus: SystemStatus = {
 }
 
 const fallbackModelStatus: ModelStatus = {
+  runtime_repo_present: false,
+  runtime_env_ready: false,
   shape_model_downloaded: false,
   paint_model_downloaded: false,
+  texture_pipeline_ready: false,
+  reference_image_required: true,
+  text_to_3d_supported: false,
+  image_to_3d_supported: false,
+  hybrid_supported: false,
   total_size_gb: 12,
   detail: 'Model status becomes available once the local backend is running.',
+  repo_path: '',
+  env_path: '',
+  models_path: '',
+  outputs_path: '',
+  notes: ['Start the backend to inspect local AI runtime status.'],
+  active_operation: null,
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -82,9 +95,36 @@ export function useSystemStatus() {
     return models
   }, [])
 
+  const installRuntime = useCallback(async () => {
+    const response = await fetch(`${apiBase}/api/ai/runtime/install`, {
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({ detail: 'Runtime install failed.' }))
+      throw new Error(payload.detail ?? 'Runtime install failed.')
+    }
+
+    const models = (await response.json()) as ModelStatus
+    setModelStatus(models)
+    return models
+  }, [])
+
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (modelStatus.active_operation?.state !== 'running') {
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      void refresh()
+    }, 2500)
+
+    return () => window.clearInterval(interval)
+  }, [modelStatus.active_operation?.state, refresh])
 
   return {
     systemStatus,
@@ -92,6 +132,7 @@ export function useSystemStatus() {
     loading,
     error,
     refresh,
+    installRuntime,
     downloadModels,
     backendOnline: !error,
   }

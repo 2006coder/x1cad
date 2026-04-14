@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, type ChangeEvent, type ReactNode } from 'react'
 import {
   Bot,
   Download,
@@ -13,10 +13,10 @@ import {
   SwatchBook,
 } from 'lucide-react'
 
-import { getPrimitiveDefinition, estimateTriangleCount } from '../data/primitives'
+import { estimateSceneObjectTriangles, getPrimitiveDefinition } from '../data/primitives'
 import { useAiGeneration } from '../hooks/useAiGeneration'
 import { useCadStore } from '../store/useCadStore'
-import type { SceneObject } from '../types/cad'
+import { isMeshObject, isPrimitiveObject, type SceneObject } from '../types/cad'
 import type { ModelStatus, SystemStatus } from '../types/system'
 
 interface InspectorPanelProps {
@@ -27,6 +27,7 @@ interface InspectorPanelProps {
   error: string | null
   backendOnline: boolean
   refreshStatus: () => Promise<void>
+  installRuntime: () => Promise<ModelStatus>
   downloadModels: () => Promise<ModelStatus>
 }
 
@@ -87,6 +88,15 @@ function NumberInput({
   )
 }
 
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('Unable to read the selected image.'))
+    reader.onload = () => resolve(String(reader.result))
+    reader.readAsDataURL(file)
+  })
+}
+
 export function InspectorPanel({
   selectedObject,
   systemStatus,
@@ -95,6 +105,7 @@ export function InspectorPanel({
   error,
   backendOnline,
   refreshStatus,
+  installRuntime,
   downloadModels,
 }: InspectorPanelProps) {
   const updateObject = useCadStore((state) => state.updateObject)
@@ -110,29 +121,73 @@ export function InspectorPanel({
   const toggleObjectVisibility = useCadStore((state) => state.toggleObjectVisibility)
   const addGeneratedObject = useCadStore((state) => state.addGeneratedObject)
 
-  const primitiveDefinition = selectedObject ? getPrimitiveDefinition(selectedObject.type) : null
+  const primitiveDefinition =
+    selectedObject && isPrimitiveObject(selectedObject)
+      ? getPrimitiveDefinition(selectedObject.type)
+      : null
   const aiGeneration = useAiGeneration(systemStatus, modelStatus)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const installActionLabel =
+    modelStatus.active_operation?.kind === 'install' && modelStatus.active_operation.state === 'running'
+      ? 'Installing runtime...'
+      : modelStatus.runtime_env_ready
+        ? 'Runtime ready'
+        : 'Install runtime'
 
   const downloadActionLabel =
-    modelStatus.shape_model_downloaded && systemStatus.ai_capability.mode === 'FULL'
-      ? 'Models ready'
-      : modelStatus.shape_model_downloaded
-        ? 'Shape model ready'
-        : `Download ${modelStatus.total_size_gb.toFixed(0)} GB`
+    modelStatus.active_operation?.kind === 'download' && modelStatus.active_operation.state === 'running'
+      ? 'Downloading models...'
+      : modelStatus.shape_model_downloaded && systemStatus.ai_capability.mode === 'FULL' && modelStatus.paint_model_downloaded
+        ? 'Models ready'
+        : modelStatus.shape_model_downloaded
+          ? 'Download paint model'
+          : `Download ${modelStatus.total_size_gb.toFixed(0)} GB`
 
-  const selectionTriangles =
-    selectedObject ? estimateTriangleCount(selectedObject.type, selectedObject.params) : 0
+  const selectionTriangles = selectedObject ? estimateSceneObjectTriangles(selectedObject) : 0
   const currentResult = aiGeneration.jobStatus?.result ?? null
+  const generateDisabled =
+    !backendOnline ||
+    aiGeneration.submitting ||
+    !modelStatus.runtime_env_ready ||
+    !modelStatus.shape_model_downloaded ||
+    (aiGeneration.request.mode === 'text' && !modelStatus.text_to_3d_supported)
+
+  async function handleImageFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file)
+      aiGeneration.setRequest((previous) => ({
+        ...previous,
+        mode: previous.mode === 'text' ? 'image' : previous.mode,
+        reference_image: dataUrl,
+      }))
+      aiGeneration.setError(null)
+    } catch (fileError) {
+      aiGeneration.setError(
+        fileError instanceof Error ? fileError.message : 'Unable to read the selected image.',
+      )
+    } finally {
+      event.target.value = ''
+    }
+  }
 
   return (
     <aside className="inspector panel">
       <Section icon={SquareDashedMousePointer} title="Selection">
-        {selectedObject && primitiveDefinition ? (
+        {selectedObject ? (
           <div className="selection-details">
             <div className="selection-header">
               <div>
                 <h2>{selectedObject.name}</h2>
-                <p>{primitiveDefinition.description}</p>
+                <p>
+                  {primitiveDefinition?.description ??
+                    'Generated mesh asset loaded from the local AI runtime.'}
+                </p>
               </div>
               <input
                 aria-label="Object color"
@@ -144,12 +199,26 @@ export function InspectorPanel({
             </div>
 
             <div className="selection-chip-row">
-              <span className="info-chip">{selectedObject.source === 'ai' ? 'AI concept' : 'Manual'}</span>
-              <button className="info-chip info-chip--button" onClick={() => toggleObjectVisibility(selectedObject.id)} type="button">
+              <span className="info-chip">
+                {selectedObject.source === 'ai'
+                  ? selectedObject.kind === 'mesh'
+                    ? 'AI mesh'
+                    : 'AI concept'
+                  : 'Manual'}
+              </span>
+              <button
+                className="info-chip info-chip--button"
+                onClick={() => toggleObjectVisibility(selectedObject.id)}
+                type="button"
+              >
                 {selectedObject.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
                 <span>{selectedObject.hidden ? 'Hidden' : 'Visible'}</span>
               </button>
-              <button className="info-chip info-chip--button" onClick={() => toggleObjectLock(selectedObject.id)} type="button">
+              <button
+                className="info-chip info-chip--button"
+                onClick={() => toggleObjectLock(selectedObject.id)}
+                type="button"
+              >
                 {selectedObject.locked ? <Lock size={13} /> : <LockOpen size={13} />}
                 <span>{selectedObject.locked ? 'Locked' : 'Unlocked'}</span>
               </button>
@@ -193,28 +262,50 @@ export function InspectorPanel({
               </div>
             </div>
 
-            <div className="vector-group">
-              <div className="vector-group__header">
-                <span>Dimensions</span>
-                <small>Live parametric controls</small>
+            {primitiveDefinition ? (
+              <div className="vector-group">
+                <div className="vector-group__header">
+                  <span>Dimensions</span>
+                  <small>Live parametric controls</small>
+                </div>
+                <div className="numeric-grid">
+                  {primitiveDefinition.fields.map((field) => (
+                    <NumberInput
+                      key={field.key}
+                      label={field.label}
+                      max={field.max}
+                      min={field.min}
+                      onChange={(value) =>
+                        updateObjectParams(selectedObject.id, { [field.key]: value })
+                      }
+                      step={field.step}
+                      unit={field.unit}
+                      value={selectedObject.params[field.key] ?? primitiveDefinition.defaults[field.key]}
+                    />
+                  ))}
+                </div>
               </div>
-              <div className="numeric-grid">
-                {primitiveDefinition.fields.map((field) => (
-                  <NumberInput
-                    key={field.key}
-                    label={field.label}
-                    max={field.max}
-                    min={field.min}
-                    onChange={(value) =>
-                      updateObjectParams(selectedObject.id, { [field.key]: value })
-                    }
-                    step={field.step}
-                    unit={field.unit}
-                    value={selectedObject.params[field.key] ?? primitiveDefinition.defaults[field.key]}
-                  />
-                ))}
+            ) : null}
+
+            {isMeshObject(selectedObject) ? (
+              <div className="metrics-card">
+                <div className="hardware-row">
+                  <span>Mesh output</span>
+                  <strong>{selectedObject.meshOutputMode === 'shape_texture' ? 'Shape + texture' : 'Shape only'}</strong>
+                </div>
+                <div className="hardware-row">
+                  <span>Vertices</span>
+                  <strong>{selectedObject.meshVertices?.toLocaleString() ?? 'n/a'}</strong>
+                </div>
+                <div className="hardware-row">
+                  <span>Faces</span>
+                  <strong>{selectedObject.meshFaces?.toLocaleString() ?? 'n/a'}</strong>
+                </div>
+                {selectedObject.meshWarning ? (
+                  <div className="metrics-card__note">{selectedObject.meshWarning}</div>
+                ) : null}
               </div>
-            </div>
+            ) : null}
           </div>
         ) : (
           <div className="empty-panel">
@@ -289,27 +380,94 @@ export function InspectorPanel({
             </button>
           </div>
 
-          <div className="pill-group">
-            {[
-              ['text', 'Text'],
-              ['image', 'Image'],
-              ['hybrid', 'Text + image'],
-            ].map(([mode, label]) => (
-              <button
-                key={mode}
-                className={`toggle-pill ${aiGeneration.request.mode === mode ? 'is-active' : ''}`}
-                onClick={() =>
-                  aiGeneration.setRequest((previous) => ({
-                    ...previous,
-                    mode: mode as 'text' | 'image' | 'hybrid',
-                  }))
-                }
-                type="button"
-              >
-                {label}
-              </button>
-            ))}
+          <div className="metrics-card">
+            <div className="hardware-row">
+              <span>Runtime</span>
+              <strong>{modelStatus.runtime_env_ready ? 'Installed' : 'Missing'}</strong>
+            </div>
+            <div className="hardware-row">
+              <span>Shape weights</span>
+              <strong>{modelStatus.shape_model_downloaded ? 'Ready' : 'Missing'}</strong>
+            </div>
+            <div className="hardware-row">
+              <span>Texture pipeline</span>
+              <strong>
+                {modelStatus.texture_pipeline_ready
+                  ? 'Ready'
+                  : modelStatus.paint_model_downloaded
+                    ? 'Build incomplete'
+                    : 'Missing'}
+              </strong>
+            </div>
+            <div className="hardware-row">
+              <span>Input mode</span>
+              <strong>{modelStatus.reference_image_required ? 'Image-guided' : 'Prompt-ready'}</strong>
+            </div>
           </div>
+
+          {modelStatus.active_operation ? (
+            <div className="job-card">
+              <div className="job-card__header">
+                <strong>{modelStatus.active_operation.stage}</strong>
+                <span>{modelStatus.active_operation.progress}%</span>
+              </div>
+              <div className="progress-bar">
+                <div style={{ width: `${modelStatus.active_operation.progress}%` }} />
+              </div>
+              <p>{modelStatus.active_operation.message}</p>
+              {modelStatus.active_operation.error ? (
+                <p className="inline-error">{modelStatus.active_operation.error}</p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="pill-group">
+            <button
+              className={`toggle-pill ${aiGeneration.request.mode === 'text' ? 'is-active' : ''}`}
+              disabled={!modelStatus.text_to_3d_supported}
+              onClick={() =>
+                aiGeneration.setRequest((previous) => ({
+                  ...previous,
+                  mode: 'text',
+                }))
+              }
+              type="button"
+            >
+              Text
+            </button>
+            <button
+              className={`toggle-pill ${aiGeneration.request.mode === 'image' ? 'is-active' : ''}`}
+              disabled={!modelStatus.image_to_3d_supported}
+              onClick={() =>
+                aiGeneration.setRequest((previous) => ({
+                  ...previous,
+                  mode: 'image',
+                }))
+              }
+              type="button"
+            >
+              Image
+            </button>
+            <button
+              className={`toggle-pill ${aiGeneration.request.mode === 'hybrid' ? 'is-active' : ''}`}
+              disabled={!modelStatus.hybrid_supported}
+              onClick={() =>
+                aiGeneration.setRequest((previous) => ({
+                  ...previous,
+                  mode: 'hybrid',
+                }))
+              }
+              type="button"
+            >
+              Text + image
+            </button>
+          </div>
+
+          {!modelStatus.text_to_3d_supported ? (
+            <div className="sidebar-note">
+              The current local Hunyuan integration is image-guided. Use an uploaded sketch, concept render, or viewport screenshot with an optional prompt for better steering.
+            </div>
+          ) : null}
 
           <label className="text-area-shell">
             <span>Prompt</span>
@@ -325,9 +483,56 @@ export function InspectorPanel({
             />
           </label>
 
-          {aiGeneration.request.mode !== 'text' ? (
+          <div className="reference-card">
+            <div className="reference-card__header">
+              <span>Reference image</span>
+              <div className="button-row">
+                <button
+                  className="secondary-button"
+                  onClick={() => fileInputRef.current?.click()}
+                  type="button"
+                >
+                  Upload
+                </button>
+                {aiGeneration.request.reference_image ? (
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      aiGeneration.setRequest((previous) => ({
+                        ...previous,
+                        reference_image: null,
+                      }))
+                    }
+                    type="button"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <input
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={handleImageFile}
+              ref={fileInputRef}
+              type="file"
+            />
+
+            {aiGeneration.request.reference_image ? (
+              <img
+                alt="Reference preview"
+                className="reference-preview"
+                src={aiGeneration.request.reference_image}
+              />
+            ) : (
+              <div className="reference-preview reference-preview--empty">
+                Drop in a sketch, concept image, or viewport screenshot to drive the local shape model.
+              </div>
+            )}
+
             <label className="text-area-shell">
-              <span>Reference image URL or data URI</span>
+              <span>Image URL or data URI</span>
               <textarea
                 onChange={(event) =>
                   aiGeneration.setRequest((previous) => ({
@@ -335,11 +540,20 @@ export function InspectorPanel({
                     reference_image: event.target.value,
                   }))
                 }
+                placeholder={
+                  aiGeneration.request.reference_image?.startsWith('data:image/')
+                    ? 'A local upload is already attached. Paste a URL here only if you want to replace it.'
+                    : 'Paste an image URL or data URI'
+                }
                 rows={3}
-                value={aiGeneration.request.reference_image ?? ''}
+                value={
+                  aiGeneration.request.reference_image?.startsWith('data:image/')
+                    ? ''
+                    : (aiGeneration.request.reference_image ?? '')
+                }
               />
             </label>
-          ) : null}
+          </div>
 
           <div className="pill-group">
             {[256, 384, 512].map((resolution) => (
@@ -374,7 +588,7 @@ export function InspectorPanel({
             </button>
             <button
               className={`toggle-pill ${aiGeneration.request.generate_texture ? 'is-active' : ''}`}
-              disabled={systemStatus.ai_capability.mode !== 'FULL'}
+              disabled={systemStatus.ai_capability.mode !== 'FULL' || !modelStatus.texture_pipeline_ready}
               onClick={() =>
                 aiGeneration.setRequest((previous) => ({
                   ...previous,
@@ -390,7 +604,16 @@ export function InspectorPanel({
           <div className="button-row">
             <button
               className="secondary-button"
-              disabled={!backendOnline || loading || modelStatus.shape_model_downloaded}
+              disabled={!backendOnline || loading || modelStatus.runtime_env_ready}
+              onClick={() => void installRuntime()}
+              type="button"
+            >
+              <HardDriveDownload size={16} />
+              <span>{installActionLabel}</span>
+            </button>
+            <button
+              className="secondary-button"
+              disabled={!backendOnline || loading || !modelStatus.runtime_env_ready}
               onClick={() => void downloadModels()}
               type="button"
             >
@@ -399,12 +622,12 @@ export function InspectorPanel({
             </button>
             <button
               className="primary-button primary-button--wide"
-              disabled={!backendOnline || aiGeneration.submitting}
+              disabled={generateDisabled}
               onClick={() => void aiGeneration.startGeneration()}
               type="button"
             >
               <Sparkles size={16} />
-              <span>{aiGeneration.submitting ? 'Launching...' : 'Generate preview'}</span>
+              <span>{aiGeneration.submitting ? 'Launching...' : 'Generate model'}</span>
             </button>
           </div>
 
@@ -431,8 +654,11 @@ export function InspectorPanel({
                   <div className="job-card__metrics">
                     <span>{currentResult.vertices.toLocaleString()} vertices</span>
                     <span>{currentResult.faces.toLocaleString()} faces</span>
-                    <span>{currentResult.suggested_primitive}</span>
+                    <span>{currentResult.output_mode === 'shape_texture' ? 'PBR textured' : 'Shape only'}</span>
                   </div>
+                  {currentResult.warning ? (
+                    <div className="metrics-card__note">{currentResult.warning}</div>
+                  ) : null}
                   <div className="button-row">
                     <button
                       className="primary-button primary-button--wide"
@@ -444,6 +670,13 @@ export function InspectorPanel({
                     >
                       <Sparkles size={16} />
                       <span>Add to scene</span>
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => window.open(currentResult.download_url, '_blank', 'noopener,noreferrer')}
+                      type="button"
+                    >
+                      Download GLB
                     </button>
                     <button
                       className="secondary-button"
@@ -471,7 +704,7 @@ export function InspectorPanel({
               <span className="guide-eyebrow">Recent generations</span>
               {aiGeneration.history.map((item) =>
                 item ? (
-                  <article className="history-item" key={`${item.preview_name}-${item.summary}`}>
+                  <article className="history-item" key={`${item.preview_name}-${item.artifact_id}`}>
                     <div>
                       <strong>{item.preview_name}</strong>
                       <p>{item.summary}</p>
@@ -483,6 +716,13 @@ export function InspectorPanel({
                         type="button"
                       >
                         Insert
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => window.open(item.download_url, '_blank', 'noopener,noreferrer')}
+                        type="button"
+                      >
+                        Download
                       </button>
                       <button
                         className="secondary-button"
@@ -534,6 +774,11 @@ export function InspectorPanel({
               <strong>No compatible GPU detected</strong>
             </div>
           )}
+          {modelStatus.notes.map((note) => (
+            <div className="sidebar-note" key={note}>
+              {note}
+            </div>
+          ))}
           {error ? <p className="inline-error">{error}</p> : null}
         </div>
       </Section>

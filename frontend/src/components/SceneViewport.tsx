@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef } from 'react'
+import { Suspense, forwardRef, useEffect, useMemo, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
 import {
   Bounds,
@@ -10,14 +10,23 @@ import {
   RoundedBox,
   TransformControls,
   useBounds,
+  useGLTF,
 } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl, TransformControls as TransformControlsImpl } from 'three-stdlib'
-import { Box3, Group, MathUtils, Vector3 } from 'three'
+import { Box3, Color, Group, MathUtils, Mesh, Vector3 } from 'three'
 import { Crosshair, Focus, Grid3X3, Move3D, RotateCw, Scale3D } from 'lucide-react'
 
-import { estimateTriangleCount } from '../data/primitives'
+import { estimateSceneObjectTriangles } from '../data/primitives'
 import { useCadStore } from '../store/useCadStore'
-import type { ActiveTool, CameraCommand, PrimitiveParams, SceneObject } from '../types/cad'
+import {
+  isMeshObject,
+  type ActiveTool,
+  type CameraCommand,
+  type PrimitiveParams,
+  type SceneObject,
+} from '../types/cad'
+
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const degreesToRadians = (value: number) => (value * Math.PI) / 180
 const radiansToDegrees = (value: number) => (value * 180) / Math.PI
@@ -189,6 +198,122 @@ const PrimitiveNode = forwardRef<
   )
 })
 
+const GeneratedMeshNode = forwardRef<
+  Group,
+  {
+    object: SceneObject & { kind: 'mesh'; type: 'generatedMesh'; meshAssetId: string }
+    selected: boolean
+    wireframe: boolean
+    onSelect: (id: string) => void
+  }
+>(function GeneratedMeshNode({ object, selected, wireframe, onSelect }, ref) {
+  const assetUrl = `${apiBase}/api/ai/assets/${object.meshAssetId}`
+  const gltf = useGLTF(assetUrl)
+  const scene = useMemo(() => {
+    const clone = gltf.scene.clone(true)
+    clone.traverse((child) => {
+      if (child instanceof Mesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map((material) => material.clone())
+        } else if (child.material) {
+          child.material = child.material.clone()
+        }
+      }
+    })
+    return clone
+  }, [gltf.scene])
+
+  useEffect(() => {
+    scene.traverse((child) => {
+      if (!(child instanceof Mesh)) {
+        return
+      }
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material]
+      materials.forEach((material) => {
+        if (!material) {
+          return
+        }
+
+        if ('wireframe' in material) {
+          material.wireframe = wireframe
+        }
+
+        if ('transparent' in material) {
+          material.transparent = true
+        }
+
+        if ('opacity' in material) {
+          material.opacity = 0.97
+        }
+
+        if ('emissive' in material) {
+          material.emissive = new Color(selected ? object.color : '#000000')
+          material.emissiveIntensity = selected ? 0.14 : 0
+        }
+      })
+    })
+  }, [object.color, scene, selected, wireframe])
+
+  const groupRotation = object.rotation.map(degreesToRadians) as [number, number, number]
+
+  return (
+    <group
+      ref={ref}
+      position={object.position}
+      rotation={groupRotation}
+      scale={object.scale}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect(object.id)
+      }}
+    >
+      <primitive object={scene} />
+      {selected && (
+        <Html position={[0, 24, 0]} center distanceFactor={9}>
+          <div className={`selection-tag ${object.source === 'ai' ? 'selection-tag--ai' : ''}`}>
+            {object.name}
+          </div>
+        </Html>
+      )}
+    </group>
+  )
+})
+
+const SceneObjectNode = forwardRef<
+  Group,
+  {
+    object: SceneObject
+    selected: boolean
+    wireframe: boolean
+    onSelect: (id: string) => void
+  }
+>(function SceneObjectNode({ object, selected, wireframe, onSelect }, ref) {
+  if (isMeshObject(object)) {
+    return (
+      <GeneratedMeshNode
+        ref={ref}
+        object={object}
+        onSelect={onSelect}
+        selected={selected}
+        wireframe={wireframe}
+      />
+    )
+  }
+
+  return (
+    <PrimitiveNode
+      ref={ref}
+      object={object}
+      onSelect={onSelect}
+      selected={selected}
+      wireframe={wireframe}
+    />
+  )
+})
+
 function CameraDirector({
   cameraRequestToken,
   cameraRequestKind,
@@ -274,7 +399,7 @@ export function SceneViewport() {
   const selectedObjectVisible = selectedObject && !selectedObject.hidden ? selectedObject : null
   const selectedObjectVisibleId = selectedObjectVisible?.id
   const estimatedTriangles = visibleObjects.reduce(
-    (total, object) => total + estimateTriangleCount(object.type, object.params),
+    (total, object) => total + estimateSceneObjectTriangles(object),
     0,
   )
 
@@ -369,67 +494,69 @@ export function SceneViewport() {
 
         <Bounds margin={1.15}>
           <group ref={sceneRef}>
-            {visibleObjects.map((object) => {
-              const isSelected = selectedObjectVisible?.id === object.id
+            <Suspense fallback={null}>
+              {visibleObjects.map((object) => {
+                const isSelected = selectedObjectVisible?.id === object.id
 
-              if (isSelected && transformEnabled) {
+                if (isSelected && transformEnabled) {
+                  return (
+                    <TransformControls
+                      key={object.id}
+                      ref={transformRef}
+                      mode={transformMode}
+                      rotationSnap={MathUtils.degToRad(15)}
+                      scaleSnap={0.05}
+                      translationSnap={snapIncrement}
+                      onMouseDown={() => {
+                        if (orbitRef.current) {
+                          orbitRef.current.enabled = false
+                        }
+                      }}
+                      onMouseUp={() => {
+                        if (orbitRef.current) {
+                          orbitRef.current.enabled = true
+                        }
+                      }}
+                      onObjectChange={() => {
+                        const target = selectedRef.current
+                        if (!target) {
+                          return
+                        }
+
+                        updateObject(object.id, {
+                          position: [target.position.x, target.position.y, target.position.z],
+                          rotation: [
+                            radiansToDegrees(target.rotation.x),
+                            radiansToDegrees(target.rotation.y),
+                            radiansToDegrees(target.rotation.z),
+                          ],
+                          scale: [target.scale.x, target.scale.y, target.scale.z],
+                        })
+                      }}
+                    >
+                      <SceneObjectNode
+                        ref={selectedRef}
+                        object={object}
+                        onSelect={selectObject}
+                        selected
+                        wireframe={viewMode === 'wireframe'}
+                      />
+                    </TransformControls>
+                  )
+                }
+
                 return (
-                  <TransformControls
+                  <SceneObjectNode
                     key={object.id}
-                    ref={transformRef}
-                    mode={transformMode}
-                    rotationSnap={MathUtils.degToRad(15)}
-                    scaleSnap={0.05}
-                    translationSnap={snapIncrement}
-                    onMouseDown={() => {
-                      if (orbitRef.current) {
-                        orbitRef.current.enabled = false
-                      }
-                    }}
-                    onMouseUp={() => {
-                      if (orbitRef.current) {
-                        orbitRef.current.enabled = true
-                      }
-                    }}
-                    onObjectChange={() => {
-                      const target = selectedRef.current
-                      if (!target) {
-                        return
-                      }
-
-                      updateObject(object.id, {
-                        position: [target.position.x, target.position.y, target.position.z],
-                        rotation: [
-                          radiansToDegrees(target.rotation.x),
-                          radiansToDegrees(target.rotation.y),
-                          radiansToDegrees(target.rotation.z),
-                        ],
-                        scale: [target.scale.x, target.scale.y, target.scale.z],
-                      })
-                    }}
-                  >
-                    <PrimitiveNode
-                      ref={selectedRef}
-                      object={object}
-                      onSelect={selectObject}
-                      selected
-                      wireframe={viewMode === 'wireframe'}
-                    />
-                  </TransformControls>
+                    ref={isSelected ? selectedRef : undefined}
+                    object={object}
+                    onSelect={selectObject}
+                    selected={isSelected}
+                    wireframe={viewMode === 'wireframe'}
+                  />
                 )
-              }
-
-              return (
-                <PrimitiveNode
-                  key={object.id}
-                  ref={isSelected ? selectedRef : undefined}
-                  object={object}
-                  onSelect={selectObject}
-                  selected={isSelected}
-                  wireframe={viewMode === 'wireframe'}
-                />
-              )
-            })}
+              })}
+            </Suspense>
           </group>
         </Bounds>
 
@@ -459,7 +586,7 @@ export function SceneViewport() {
             </span>
             <strong>{selectedObjectVisible.name}</strong>
             <p>
-              {selectedObjectVisible.type} at X {selectedObjectVisible.position[0].toFixed(1)} / Y{' '}
+              {selectedObjectVisible.kind === 'mesh' ? 'mesh' : selectedObjectVisible.type} at X {selectedObjectVisible.position[0].toFixed(1)} / Y{' '}
               {selectedObjectVisible.position[1].toFixed(1)} / Z {selectedObjectVisible.position[2].toFixed(1)}
             </p>
             <div className="viewport-tool-row">

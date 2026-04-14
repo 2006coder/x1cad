@@ -212,13 +212,14 @@ export const useCadStore = create<CadState>()(
         viewMode: state.viewMode,
         showOnboarding: state.showOnboarding,
       }),
-      version: 2,
+      version: 3,
       migrate: (persistedState) => {
         const state = persistedState as Partial<CadState>
         return {
           sceneObjects:
             state.sceneObjects?.map((object) => ({
               ...object,
+              kind: object.kind ?? ('primitive' as const),
               hidden: object.hidden ?? false,
               locked: object.locked ?? false,
               source: object.source ?? ('manual' as const),

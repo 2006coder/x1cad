@@ -1,4 +1,4 @@
-import { estimateTriangleCount } from '../data/primitives'
+import { estimateSceneObjectTriangles } from '../data/primitives'
 import { useCadStore, useSelectedObject } from '../store/useCadStore'
 import type { SystemStatus } from '../types/system'
 
@@ -15,7 +15,7 @@ export function StatusBar({ systemStatus, backendOnline }: StatusBarProps) {
 
   const estimatedTriangles = sceneObjects
     .filter((object) => !object.hidden)
-    .reduce((total, object) => total + estimateTriangleCount(object.type, object.params), 0)
+    .reduce((total, object) => total + estimateSceneObjectTriangles(object), 0)
 
   return (
     <footer className="statusbar panel">
