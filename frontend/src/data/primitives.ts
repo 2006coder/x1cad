@@ -279,6 +279,38 @@ export function createSceneObjectFromAiResult(
   }
 }
 
+export function createSceneObjectFromAiSuggestion(
+  result: GenerationResult,
+  existingCount: number,
+): SceneObject {
+  const definition = primitiveMap.get(result.suggested_primitive)
+  if (!definition) {
+    throw new Error(`Unknown AI suggestion type: ${result.suggested_primitive}`)
+  }
+
+  const params = { ...definition.defaults, ...result.suggested_params }
+  const column = existingCount % 3
+  const row = Math.floor(existingCount / 3)
+  const x = column * 34 - 34
+  const z = row * 32 + 22
+
+  return {
+    id: `${result.suggested_primitive}-${crypto.randomUUID()}`,
+    kind: 'primitive',
+    type: result.suggested_primitive,
+    name: `${result.preview_name} Proxy`,
+    color: result.suggested_color,
+    params,
+    position: [x, groundOffset(result.suggested_primitive, params), z],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    hidden: false,
+    locked: false,
+    source: 'ai',
+    generationPrompt: result.summary,
+  }
+}
+
 export function buildDemoScene(): SceneObject[] {
   const box = createSceneObject('roundedBox', 0)
   box.name = 'Enclosure'

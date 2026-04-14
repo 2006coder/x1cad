@@ -1,7 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { buildDemoScene, createSceneObject, createSceneObjectFromAiResult } from '../data/primitives'
+import {
+  buildDemoScene,
+  createSceneObject,
+  createSceneObjectFromAiResult,
+  createSceneObjectFromAiSuggestion,
+} from '../data/primitives'
 import type {
   ActiveTool,
   CameraCommand,
@@ -30,6 +35,7 @@ interface CadState {
   cameraRequest: CameraRequest
   addPrimitive: (type: PrimitiveType) => void
   addGeneratedObject: (result: GenerationResult) => void
+  addGeneratedProxyObject: (result: GenerationResult) => void
   selectObject: (id: string | null) => void
   updateObject: (id: string, patch: Partial<Omit<SceneObject, 'id' | 'type'>>) => void
   updateObjectParams: (id: string, params: PrimitiveParams) => void
@@ -52,6 +58,7 @@ interface CadState {
   dismissOnboarding: () => void
   openOnboarding: () => void
   requestCamera: (kind: CameraCommand) => void
+  nudgeSelected: (axis: 0 | 1 | 2, delta: number) => void
 }
 
 const demoScene = buildDemoScene()
@@ -82,6 +89,18 @@ export const useCadStore = create<CadState>()(
       addGeneratedObject: (result) =>
         set((state) => {
           const nextObject = createSceneObjectFromAiResult(result, state.sceneObjects.length)
+          return {
+            sceneObjects: [...state.sceneObjects, nextObject],
+            selectedObjectId: nextObject.id,
+            cameraRequest: {
+              kind: 'focusSelected',
+              token: state.cameraRequest.token + 1,
+            },
+          }
+        }),
+      addGeneratedProxyObject: (result) =>
+        set((state) => {
+          const nextObject = createSceneObjectFromAiSuggestion(result, state.sceneObjects.length)
           return {
             sceneObjects: [...state.sceneObjects, nextObject],
             selectedObjectId: nextObject.id,
@@ -200,6 +219,24 @@ export const useCadStore = create<CadState>()(
             token: state.cameraRequest.token + 1,
           },
         })),
+      nudgeSelected: (axis, delta) =>
+        set((state) => {
+          const target = state.sceneObjects.find((object) => object.id === state.selectedObjectId)
+          if (!target || target.locked) {
+            return state
+          }
+
+          return {
+            sceneObjects: state.sceneObjects.map((object) =>
+              object.id === target.id
+                ? {
+                    ...object,
+                    position: updateTuple(object.position, axis, object.position[axis] + delta),
+                  }
+                : object,
+            ),
+          }
+        }),
     }),
     {
       name: 'x1cad-workspace',

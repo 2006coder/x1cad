@@ -95,6 +95,16 @@ def generation_asset(asset_id: str):
     return FileResponse(runtime_manager.get_artifact_path(asset_id))
 
 
+@app.get("/api/ai/jobs/{job_id}/guide-image")
+def generation_guide_image(job_id: str):
+    return FileResponse(runtime_manager.get_job_image_path(job_id, kind="guide"))
+
+
+@app.get("/api/ai/jobs/{job_id}/input-image")
+def generation_input_image(job_id: str):
+    return FileResponse(runtime_manager.get_job_image_path(job_id, kind="input"))
+
+
 @app.delete("/api/ai/jobs/{job_id}")
 def cancel_generation(job_id: str):
     runtime_manager.cancel(job_id)

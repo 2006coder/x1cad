@@ -31,6 +31,9 @@ REALESRGAN_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 )
 ZIMAGE_MODEL_DIR = "z-image-turbo"
+TORCH_PACKAGE_VERSION = "2.6.0"
+TORCHVISION_PACKAGE_VERSION = "0.21.0"
+TORCHAUDIO_PACKAGE_VERSION = "2.6.0"
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 BACKEND_DIR = ROOT_DIR / "backend"
@@ -65,6 +68,14 @@ def _artifact_file(asset_id: str) -> Path:
     return OUTPUTS_DIR / asset_id / "result.glb"
 
 
+def _guide_image_file(asset_id: str) -> Path:
+    return OUTPUTS_DIR / asset_id / "reference.png"
+
+
+def _input_image_file(asset_id: str) -> Path:
+    return OUTPUTS_DIR / asset_id / "reference-original.png"
+
+
 def _result_file(asset_id: str) -> Path:
     return OUTPUTS_DIR / asset_id / "result.json"
 
@@ -77,12 +88,16 @@ def _paths_file(asset_id: str) -> Path:
     return OUTPUTS_DIR / asset_id / "paths.json"
 
 
+def _job_config_file(asset_id: str) -> Path:
+    return OUTPUTS_DIR / asset_id / "job.json"
+
+
 def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
 
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return None
 
@@ -107,6 +122,47 @@ def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
     if completed.returncode != 0:
         output = completed.stderr.strip() or completed.stdout.strip() or "Command failed."
         raise RuntimeError(output)
+
+
+def _runtime_torch_version() -> str | None:
+    runtime_python = _runtime_python()
+    if not runtime_python.exists():
+        return None
+
+    try:
+        completed = subprocess.run(
+            [str(runtime_python), "-c", "from importlib.metadata import version; print(version('torch'))"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if completed.returncode != 0:
+        return None
+
+    version = completed.stdout.strip()
+    return version or None
+
+
+def _torch_supports_texture_pipeline(version: str | None) -> bool:
+    if not version:
+        return False
+
+    normalized = version.split("+", 1)[0]
+    parts = normalized.split(".")
+    if len(parts) < 2:
+        return False
+
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+    except ValueError:
+        return False
+
+    return (major, minor) >= (2, 6)
 
 
 def _infer_proxy_shape(prompt: str) -> tuple[str, dict[str, float], str]:
@@ -239,6 +295,54 @@ class HunyuanRuntimeManager:
         self._operation: _OperationRecord | None = None
         self._jobs: dict[str, _GenerationJob] = {}
         self._lock = Lock()
+        self._recover_interrupted_jobs()
+
+    def _recover_interrupted_jobs(self) -> None:
+        for status_path in OUTPUTS_DIR.glob("*/status.json"):
+            payload = _load_json(status_path)
+            if not payload:
+                continue
+
+            if payload.get("state") not in {"queued", "running"}:
+                continue
+
+            payload["state"] = "failed"
+            payload["progress"] = 100
+            payload["stage"] = "Interrupted"
+            payload["eta_seconds"] = 0
+            payload["message"] = (
+                "The local Hunyuan runner was interrupted before this job completed. Relaunch the generation to retry."
+            )
+            payload["error"] = "Interrupted by a workstation shutdown or backend restart."
+            _write_json(status_path, payload)
+
+    def _load_persisted_job(self, job_id: str) -> _GenerationJob | None:
+        output_dir = OUTPUTS_DIR / job_id
+        config = _load_json(_job_config_file(job_id))
+        if not config:
+            return None
+
+        try:
+            request = GenerationRequest(
+                prompt=str(config.get("prompt") or "Recovered x1cad generation"),
+                mode=config.get("mode") or "text",
+                generate_texture=bool(config.get("requested_texture", config.get("generate_texture", False))),
+                resolution=int(config.get("resolution") or 512),
+                reference_image=config.get("reference_image"),
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+        return _GenerationJob(
+            job_id=job_id,
+            request=request,
+            accepted_at=_now(),
+            texture_enabled=bool(config.get("generate_texture", False)),
+            vram_gb=0,
+            ram_gb=0,
+            output_dir=output_dir,
+            created_at_monotonic=monotonic(),
+        )
 
     def _operation_status(self) -> RuntimeOperationStatus | None:
         if not self._operation:
@@ -303,6 +407,7 @@ class HunyuanRuntimeManager:
         runtime_state = _runtime_state()
         repo_present = (REPO_DIR / "README.md").exists()
         env_ready = bool(runtime_state.get("runtime_env_ready")) and _runtime_python().exists()
+        runtime_torch_version = _runtime_torch_version() if env_ready else None
         shape_downloaded = (MODELS_DIR / "hunyuan3d-dit-v2-1").exists()
         paint_downloaded = (MODELS_DIR / "hunyuan3d-paintpbr-v2-1").exists()
         zimage_downloaded = (MODELS_DIR / ZIMAGE_MODEL_DIR).exists()
@@ -315,7 +420,22 @@ class HunyuanRuntimeManager:
         ) or any(
             (REPO_DIR / "hy3dpaint" / "DifferentiableRenderer").glob("mesh_inpaint_processor*.so")
         )
-        texture_pipeline_ready = paint_downloaded and realesrgan_ready and custom_rasterizer_ready and mesh_inpaint_ready
+        native_paint_components_ready = (
+            paint_downloaded and realesrgan_ready and custom_rasterizer_ready and mesh_inpaint_ready
+        )
+        torch_ready_for_textures = _torch_supports_texture_pipeline(runtime_torch_version)
+        texture_blocker: str | None = None
+        if native_paint_components_ready and not torch_ready_for_textures:
+            detected_version = runtime_torch_version or "unknown"
+            texture_blocker = (
+                "Texture painting requires torch 2.6+ in the managed AI runtime because the Tencent "
+                f"paint stack loads secure weights through torch.load(). Detected runtime torch {detected_version}."
+            )
+        elif paint_downloaded and not native_paint_components_ready:
+            texture_blocker = (
+                "Texture weights are present, but one or more native paint components are still missing."
+            )
+        texture_pipeline_ready = native_paint_components_ready and torch_ready_for_textures
 
         notes = [
             "x1cad runs Tencent Hunyuan3D 2.1 directly through a local managed runtime rather than Tencent's demo API server.",
@@ -331,23 +451,28 @@ class HunyuanRuntimeManager:
             )
         if runtime_state.get("warning"):
             notes.append(str(runtime_state["warning"]))
-        if paint_downloaded and not texture_pipeline_ready:
-            notes.append(
-                "Texture weights are present, but one or more native paint components are still missing. x1cad will gracefully fall back to shape-only generation until those finish building."
-            )
+        if texture_blocker:
+            notes.append(f"{texture_blocker} x1cad will gracefully fall back to shape-only generation until this is fixed.")
 
         detail = (
             "Local AI runtime is ready for image-to-3D, prompt-to-image-to-3D, and prompt-guided hybrid generation."
             if repo_present and env_ready and shape_downloaded
             else "Prepare the local Hunyuan runtime, then download the model weights to unlock real generation."
         )
+        if repo_present and env_ready and shape_downloaded and texture_blocker:
+            detail = (
+                "Local shape generation is ready. Texture painting is temporarily gated until the managed AI runtime "
+                "meets the paint pipeline requirements."
+            )
 
         return ModelStatus(
             runtime_repo_present=repo_present,
             runtime_env_ready=env_ready,
+            runtime_torch_version=runtime_torch_version,
             shape_model_downloaded=shape_downloaded,
             paint_model_downloaded=paint_downloaded,
             texture_pipeline_ready=texture_pipeline_ready,
+            texture_blocker=texture_blocker,
             reference_image_required=not zimage_downloaded,
             text_to_3d_supported=zimage_downloaded and shape_downloaded and env_ready,
             image_to_3d_supported=shape_downloaded and env_ready,
@@ -409,9 +534,9 @@ class HunyuanRuntimeManager:
                     "-m",
                     "pip",
                     "install",
-                    "torch==2.5.1",
-                    "torchvision==0.20.1",
-                    "torchaudio==2.5.1",
+                    f"torch=={TORCH_PACKAGE_VERSION}",
+                    f"torchvision=={TORCHVISION_PACKAGE_VERSION}",
+                    f"torchaudio=={TORCHAUDIO_PACKAGE_VERSION}",
                     "--index-url",
                     "https://download.pytorch.org/whl/cu124",
                 ]
@@ -719,9 +844,20 @@ class HunyuanRuntimeManager:
             raise HTTPException(status_code=409, detail="Result is not ready yet.")
 
         suggested_primitive, suggested_params, suggested_color = _infer_proxy_shape(job.request.prompt)
+        guide_image = _guide_image_file(job.job_id)
+        input_image = _input_image_file(job.job_id)
         payload.setdefault("artifact_id", job.job_id)
         payload.setdefault("asset_url", f"/api/ai/assets/{job.job_id}")
         payload.setdefault("download_url", f"/api/ai/assets/{job.job_id}")
+        payload.setdefault("generation_mode", job.request.mode)
+        payload.setdefault(
+            "guide_image_url",
+            f"/api/ai/jobs/{job.job_id}/guide-image" if guide_image.exists() else None,
+        )
+        payload.setdefault(
+            "input_image_url",
+            f"/api/ai/jobs/{job.job_id}/input-image" if input_image.exists() else None,
+        )
         payload.setdefault("runtime", "hunyuan3d-2.1")
         payload.setdefault("suggested_primitive", suggested_primitive)
         payload.setdefault("suggested_params", suggested_params)
@@ -734,6 +870,19 @@ class HunyuanRuntimeManager:
         if not artifact.exists():
             raise HTTPException(status_code=404, detail="Generated asset not found.")
         return artifact
+
+    def get_job_image_path(self, job_id: str, *, kind: str) -> Path:
+        self._get_job(job_id)
+        if kind == "guide":
+            image_path = _guide_image_file(job_id)
+        elif kind == "input":
+            image_path = _input_image_file(job_id)
+        else:
+            raise HTTPException(status_code=404, detail="Unknown image asset.")
+
+        if not image_path.exists():
+            raise HTTPException(status_code=404, detail="Requested generation image is not available.")
+        return image_path
 
     def cancel(self, job_id: str) -> None:
         job = self._get_job(job_id)
@@ -764,6 +913,9 @@ class HunyuanRuntimeManager:
     def _get_job(self, job_id: str) -> _GenerationJob:
         with self._lock:
             job = self._jobs.get(job_id)
+
+        if not job:
+            job = self._load_persisted_job(job_id)
 
         if not job:
             raise HTTPException(status_code=404, detail="Job not found.")

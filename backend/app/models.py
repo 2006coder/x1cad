@@ -62,9 +62,11 @@ class HealthStatus(BaseModel):
 class ModelStatus(BaseModel):
     runtime_repo_present: bool
     runtime_env_ready: bool
+    runtime_torch_version: str | None = None
     shape_model_downloaded: bool
     paint_model_downloaded: bool
     texture_pipeline_ready: bool
+    texture_blocker: str | None = None
     reference_image_required: bool
     text_to_3d_supported: bool
     image_to_3d_supported: bool
@@ -95,6 +97,7 @@ class JobAccepted(BaseModel):
 class GenerationResult(BaseModel):
     preview_name: str
     summary: str
+    generation_mode: Literal["text", "image", "hybrid"]
     vertices: int
     faces: int
     output_mode: Literal["shape", "shape_texture"]
@@ -115,6 +118,8 @@ class GenerationResult(BaseModel):
     artifact_id: str
     asset_url: str
     download_url: str
+    guide_image_url: str | None = None
+    input_image_url: str | None = None
     runtime: Literal["hunyuan3d-2.1"] = "hunyuan3d-2.1"
     warning: str | None = None
 

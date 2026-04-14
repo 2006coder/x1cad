@@ -47,9 +47,11 @@ export interface SystemStatus {
 export interface ModelStatus {
   runtime_repo_present: boolean
   runtime_env_ready: boolean
+  runtime_torch_version: string | null
   shape_model_downloaded: boolean
   paint_model_downloaded: boolean
   texture_pipeline_ready: boolean
+  texture_blocker: string | null
   reference_image_required: boolean
   text_to_3d_supported: boolean
   image_to_3d_supported: boolean
@@ -80,6 +82,7 @@ export interface JobAccepted {
 export interface GenerationResult {
   preview_name: string
   summary: string
+  generation_mode: 'text' | 'image' | 'hybrid'
   vertices: number
   faces: number
   output_mode: 'shape' | 'shape_texture'
@@ -90,6 +93,8 @@ export interface GenerationResult {
   artifact_id: string
   asset_url: string
   download_url: string
+  guide_image_url: string | null
+  input_image_url: string | null
   runtime: 'hunyuan3d-2.1'
   warning: string | null
 }

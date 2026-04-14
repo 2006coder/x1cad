@@ -474,6 +474,7 @@ export function SceneViewport() {
       <Canvas
         camera={{ fov: 42, position: [68, 42, 68] }}
         className="viewport-canvas"
+        gl={{ antialias: true, preserveDrawingBuffer: true }}
         onPointerMissed={() => selectObject(null)}
         shadows
       >
@@ -614,7 +615,7 @@ export function SceneViewport() {
       <div className="viewport-overlay viewport-overlay--hud">
         <div className="hud-card">
           <span className="guide-eyebrow">Shortcuts</span>
-          <p>`G` move, `R` rotate, `S` scale, `F` focus, `Shift+F` frame scene.</p>
+          <p>`G` move, `R` rotate, `S` scale, `F` focus, arrows/PageUp/PageDown nudge.</p>
         </div>
       </div>
 

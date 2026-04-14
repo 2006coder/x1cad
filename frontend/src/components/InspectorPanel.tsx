@@ -1,23 +1,30 @@
-import { useRef, type ChangeEvent, type ReactNode } from 'react'
+import { useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
 import {
   Bot,
+  Copy,
   Download,
   Eye,
   EyeOff,
+  Focus,
   HardDriveDownload,
+  ImagePlus,
   Lock,
   LockOpen,
   RefreshCw,
   Sparkles,
   SquareDashedMousePointer,
   SwatchBook,
+  Trash2,
+  WandSparkles,
 } from 'lucide-react'
 
 import { estimateSceneObjectTriangles, getPrimitiveDefinition } from '../data/primitives'
 import { useAiGeneration } from '../hooks/useAiGeneration'
 import { useCadStore } from '../store/useCadStore'
 import { isMeshObject, isPrimitiveObject, type SceneObject } from '../types/cad'
-import type { ModelStatus, SystemStatus } from '../types/system'
+import type { GenerationRequest, GenerationResult, ModelStatus, SystemStatus } from '../types/system'
+
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 
 interface InspectorPanelProps {
   selectedObject: SceneObject | null
@@ -97,6 +104,50 @@ function fileToDataUrl(file: File) {
   })
 }
 
+function modeWithReference(
+  currentMode: GenerationRequest['mode'],
+  hybridSupported: boolean,
+): GenerationRequest['mode'] {
+  if (currentMode !== 'text') {
+    return currentMode
+  }
+
+  return hybridSupported ? 'hybrid' : 'image'
+}
+
+function isImageReferenceText(value: string) {
+  const normalized = value.trim()
+  return (
+    normalized.startsWith('data:image/') ||
+    normalized.startsWith('http://') ||
+    normalized.startsWith('https://')
+  )
+}
+
+function resolveApiUrl(path: string | null | undefined) {
+  if (!path) {
+    return null
+  }
+
+  if (path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) {
+    return path
+  }
+
+  return `${apiBase}${path}`
+}
+
+function resultPreviewLabel(result: GenerationResult) {
+  if (result.generation_mode === 'text') {
+    return 'Prompt guide image'
+  }
+
+  if (result.generation_mode === 'hybrid') {
+    return 'Prompt-steered guide'
+  }
+
+  return 'Reference image'
+}
+
 export function InspectorPanel({
   selectedObject,
   systemStatus,
@@ -120,6 +171,10 @@ export function InspectorPanel({
   const toggleObjectLock = useCadStore((state) => state.toggleObjectLock)
   const toggleObjectVisibility = useCadStore((state) => state.toggleObjectVisibility)
   const addGeneratedObject = useCadStore((state) => state.addGeneratedObject)
+  const addGeneratedProxyObject = useCadStore((state) => state.addGeneratedProxyObject)
+  const duplicateSelected = useCadStore((state) => state.duplicateSelected)
+  const deleteSelected = useCadStore((state) => state.deleteSelected)
+  const requestCamera = useCadStore((state) => state.requestCamera)
 
   const primitiveDefinition =
     selectedObject && isPrimitiveObject(selectedObject)
@@ -127,6 +182,7 @@ export function InspectorPanel({
       : null
   const aiGeneration = useAiGeneration(systemStatus, modelStatus)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [referenceDropActive, setReferenceDropActive] = useState(false)
 
   const installActionLabel =
     modelStatus.active_operation?.kind === 'install' && modelStatus.active_operation.state === 'running'
@@ -151,11 +207,41 @@ export function InspectorPanel({
   const generateDisabled =
     !backendOnline ||
     aiGeneration.submitting ||
+    aiGeneration.request.prompt.trim().length < 3 ||
     !modelStatus.runtime_env_ready ||
     !modelStatus.shape_model_downloaded ||
     (aiGeneration.request.mode === 'text' && !modelStatus.text_to_3d_supported) ||
     (aiGeneration.request.mode === 'image' && !modelStatus.image_to_3d_supported) ||
     (aiGeneration.request.mode === 'hybrid' && !modelStatus.hybrid_supported)
+
+  const currentResultPreview =
+    currentResult && resolveApiUrl(currentResult.guide_image_url ?? currentResult.input_image_url)
+  const generationFlowCopy =
+    aiGeneration.request.mode === 'text'
+      ? 'Prompt -> Z-Image-Turbo guide render -> Hunyuan3D shape generation.'
+      : aiGeneration.request.mode === 'hybrid'
+        ? 'Prompt + image -> Z-Image-Turbo refinement -> Hunyuan3D shape generation.'
+        : 'Upload, paste, or capture an image -> Hunyuan3D shape generation.'
+
+  function applyReferenceImage(referenceImage: string) {
+    aiGeneration.setRequest((previous) => ({
+      ...previous,
+      mode: modeWithReference(previous.mode, modelStatus.hybrid_supported),
+      reference_image: referenceImage,
+    }))
+    aiGeneration.setError(null)
+  }
+
+  async function handleReferenceFile(file: File) {
+    try {
+      const dataUrl = await fileToDataUrl(file)
+      applyReferenceImage(dataUrl)
+    } catch (fileError) {
+      aiGeneration.setError(
+        fileError instanceof Error ? fileError.message : 'Unable to read the selected image.',
+      )
+    }
+  }
 
   async function handleImageFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -164,19 +250,71 @@ export function InspectorPanel({
     }
 
     try {
-      const dataUrl = await fileToDataUrl(file)
-      aiGeneration.setRequest((previous) => ({
-        ...previous,
-        mode: previous.mode === 'text' ? 'image' : previous.mode,
-        reference_image: dataUrl,
-      }))
-      aiGeneration.setError(null)
+      await handleReferenceFile(file)
     } catch (fileError) {
       aiGeneration.setError(
         fileError instanceof Error ? fileError.message : 'Unable to read the selected image.',
       )
     } finally {
       event.target.value = ''
+    }
+  }
+
+  async function captureViewportReference() {
+    const canvas = document.querySelector<HTMLCanvasElement>('.viewport-canvas canvas')
+    if (!canvas) {
+      aiGeneration.setError('Viewport snapshot is unavailable until the scene canvas has loaded.')
+      return
+    }
+
+    try {
+      applyReferenceImage(canvas.toDataURL('image/png'))
+    } catch (captureError) {
+      aiGeneration.setError(
+        captureError instanceof Error
+          ? captureError.message
+          : 'Unable to capture the current viewport as a reference image.',
+      )
+    }
+  }
+
+  async function applyReferenceText(value: string) {
+    if (!isImageReferenceText(value)) {
+      aiGeneration.setError('Paste an image URL, data URI, screenshot, or image file.')
+      return
+    }
+
+    applyReferenceImage(value.trim())
+  }
+
+  async function handleReferenceDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    setReferenceDropActive(false)
+
+    const file = Array.from(event.dataTransfer.files).find((entry) => entry.type.startsWith('image/'))
+    if (file) {
+      await handleReferenceFile(file)
+      return
+    }
+
+    const url = event.dataTransfer.getData('text/uri-list') || event.dataTransfer.getData('text/plain')
+    if (url.trim()) {
+      await applyReferenceText(url)
+    }
+  }
+
+  async function handleReferencePaste(event: ClipboardEvent<HTMLDivElement>) {
+    const file = Array.from(event.clipboardData.files).find((entry) => entry.type.startsWith('image/'))
+    if (file) {
+      event.preventDefault()
+      await handleReferenceFile(file)
+      return
+    }
+
+    const text = event.clipboardData.getData('text/plain')
+    if (text.trim() && isImageReferenceText(text)) {
+      event.preventDefault()
+      await applyReferenceText(text)
     }
   }
 
@@ -225,6 +363,25 @@ export function InspectorPanel({
               >
                 {selectedObject.locked ? <Lock size={13} /> : <LockOpen size={13} />}
                 <span>{selectedObject.locked ? 'Locked' : 'Unlocked'}</span>
+              </button>
+            </div>
+
+            <div className="button-row">
+              <button
+                className="secondary-button"
+                onClick={() => requestCamera('focusSelected')}
+                type="button"
+              >
+                <Focus size={16} />
+                <span>Focus</span>
+              </button>
+              <button className="secondary-button" onClick={() => duplicateSelected()} type="button">
+                <Copy size={16} />
+                <span>Duplicate</span>
+              </button>
+              <button className="secondary-button danger" onClick={() => deleteSelected()} type="button">
+                <Trash2 size={16} />
+                <span>Delete</span>
               </button>
             </div>
 
@@ -390,6 +547,10 @@ export function InspectorPanel({
               <strong>{modelStatus.runtime_env_ready ? 'Installed' : 'Missing'}</strong>
             </div>
             <div className="hardware-row">
+              <span>Runtime Torch</span>
+              <strong>{modelStatus.runtime_torch_version ?? 'Unavailable'}</strong>
+            </div>
+            <div className="hardware-row">
               <span>Shape weights</span>
               <strong>{modelStatus.shape_model_downloaded ? 'Ready' : 'Missing'}</strong>
             </div>
@@ -408,6 +569,10 @@ export function InspectorPanel({
               <strong>{modelStatus.reference_image_required ? 'Image-guided' : 'Prompt-ready'}</strong>
             </div>
           </div>
+
+          {modelStatus.texture_blocker ? (
+            <div className="sidebar-note">{modelStatus.texture_blocker}</div>
+          ) : null}
 
           {modelStatus.active_operation ? (
             <div className="job-card">
@@ -467,6 +632,11 @@ export function InspectorPanel({
             </button>
           </div>
 
+          <div className="ai-flow-card">
+            <span className="guide-eyebrow">Current flow</span>
+            <p>{generationFlowCopy}</p>
+          </div>
+
           {!modelStatus.text_to_3d_supported ? (
             <div className="sidebar-note">
               Download the prompt bridge to unlock prompt-only generation and true prompt-guided hybrid refinement. Until then, image mode remains fully available.
@@ -498,6 +668,14 @@ export function InspectorPanel({
                 >
                   Upload
                 </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => void captureViewportReference()}
+                  type="button"
+                >
+                  <ImagePlus size={16} />
+                  <span>Use viewport</span>
+                </button>
                 {aiGeneration.request.reference_image ? (
                   <button
                     className="secondary-button"
@@ -523,17 +701,45 @@ export function InspectorPanel({
               type="file"
             />
 
-            {aiGeneration.request.reference_image ? (
-              <img
-                alt="Reference preview"
-                className="reference-preview"
-                src={aiGeneration.request.reference_image}
-              />
-            ) : (
-              <div className="reference-preview reference-preview--empty">
-                Drop in a sketch, concept image, or viewport screenshot to drive the local shape model. In hybrid mode, x1cad can refine it with your prompt before the 3D pass.
-              </div>
-            )}
+            <div
+              className={`reference-dropzone ${referenceDropActive ? 'is-dragging' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setReferenceDropActive(true)
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault()
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setReferenceDropActive(false)
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                if (!referenceDropActive) {
+                  setReferenceDropActive(true)
+                }
+              }}
+              onDrop={(event) => void handleReferenceDrop(event)}
+              onPaste={(event) => void handleReferencePaste(event)}
+              tabIndex={0}
+            >
+              {aiGeneration.request.reference_image ? (
+                <img
+                  alt="Reference preview"
+                  className="reference-preview"
+                  src={resolveApiUrl(aiGeneration.request.reference_image) ?? undefined}
+                />
+              ) : (
+                <div className="reference-preview reference-preview--empty">
+                  Drop in a sketch, paste a screenshot, or capture the viewport to drive the local shape model. In hybrid mode, x1cad refines the image with your prompt before the 3D pass.
+                </div>
+              )}
+            </div>
+
+            <div className="reference-card__hint">
+              <WandSparkles size={14} />
+              <span>Tip: paste a screenshot directly into the preview area, or capture the current viewport for hybrid generation.</span>
+            </div>
 
             <label className="text-area-shell">
               <span>Image URL or data URI</span>
@@ -605,6 +811,13 @@ export function InspectorPanel({
             </button>
           </div>
 
+          {!modelStatus.texture_pipeline_ready && modelStatus.paint_model_downloaded ? (
+            <div className="sidebar-note">
+              {modelStatus.texture_blocker ??
+                'x1cad is keeping texture generation off until the local paint stack is fully ready.'}
+            </div>
+          ) : null}
+
           <div className="button-row">
             <button
               className="secondary-button"
@@ -655,6 +868,16 @@ export function InspectorPanel({
                 <div className="result-summary result-summary--stacked">
                   <strong>{currentResult.preview_name}</strong>
                   <span>{currentResult.summary}</span>
+                  {currentResultPreview ? (
+                    <div className="result-preview-card">
+                      <span className="guide-eyebrow">{resultPreviewLabel(currentResult)}</span>
+                      <img
+                        alt={resultPreviewLabel(currentResult)}
+                        className="result-preview"
+                        src={currentResultPreview}
+                      />
+                    </div>
+                  ) : null}
                   <div className="job-card__metrics">
                     <span>{currentResult.vertices.toLocaleString()} vertices</span>
                     <span>{currentResult.faces.toLocaleString()} faces</span>
@@ -665,7 +888,7 @@ export function InspectorPanel({
                   ) : null}
                   <div className="button-row">
                     <button
-                      className="primary-button primary-button--wide"
+                      className="primary-button"
                       onClick={() => {
                         addGeneratedObject(currentResult)
                         aiGeneration.dismissCurrentResult()
@@ -673,11 +896,27 @@ export function InspectorPanel({
                       type="button"
                     >
                       <Sparkles size={16} />
-                      <span>Add to scene</span>
+                      <span>Insert mesh</span>
                     </button>
                     <button
                       className="secondary-button"
-                      onClick={() => window.open(currentResult.download_url, '_blank', 'noopener,noreferrer')}
+                      onClick={() => {
+                        addGeneratedProxyObject(currentResult)
+                        aiGeneration.dismissCurrentResult()
+                      }}
+                      type="button"
+                    >
+                      Insert proxy
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        window.open(
+                          resolveApiUrl(currentResult.download_url) ?? currentResult.download_url,
+                          '_blank',
+                          'noopener,noreferrer',
+                        )
+                      }
                       type="button"
                     >
                       Download GLB
@@ -713,17 +952,40 @@ export function InspectorPanel({
                       <strong>{item.preview_name}</strong>
                       <p>{item.summary}</p>
                     </div>
+                    {resolveApiUrl(item.guide_image_url ?? item.input_image_url) ? (
+                      <div className="result-preview-card">
+                        <span className="guide-eyebrow">{resultPreviewLabel(item)}</span>
+                        <img
+                          alt={resultPreviewLabel(item)}
+                          className="result-preview"
+                          src={resolveApiUrl(item.guide_image_url ?? item.input_image_url) ?? undefined}
+                        />
+                      </div>
+                    ) : null}
                     <div className="history-item__actions">
                       <button
                         className="secondary-button"
                         onClick={() => addGeneratedObject(item)}
                         type="button"
                       >
-                        Insert
+                        Insert mesh
                       </button>
                       <button
                         className="secondary-button"
-                        onClick={() => window.open(item.download_url, '_blank', 'noopener,noreferrer')}
+                        onClick={() => addGeneratedProxyObject(item)}
+                        type="button"
+                      >
+                        Insert proxy
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() =>
+                          window.open(
+                            resolveApiUrl(item.download_url) ?? item.download_url,
+                            '_blank',
+                            'noopener,noreferrer',
+                          )
+                        }
                         type="button"
                       >
                         Download

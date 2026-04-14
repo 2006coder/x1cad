@@ -157,6 +157,10 @@ button {
   gap: 12px;
 }
 
+.button-row {
+  flex-wrap: wrap;
+}
+
 .brand-mark {
   width: 46px;
   height: 46px;
@@ -784,6 +788,22 @@ button:disabled {
   line-height: 1.5;
 }
 
+.ai-flow-card,
+.result-preview-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(7, 15, 23, 0.42);
+}
+
+.ai-flow-card p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .scene-tree {
   display: grid;
   gap: 10px;
@@ -1001,6 +1021,21 @@ button:disabled {
   gap: 10px;
 }
 
+.reference-dropzone {
+  border-radius: 18px;
+  outline: none;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.reference-dropzone.is-dragging,
+.reference-dropzone:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.34);
+}
+
 .reference-preview {
   width: 100%;
   min-height: 168px;
@@ -1018,6 +1053,24 @@ button:disabled {
   color: var(--text-muted);
   line-height: 1.5;
   text-align: center;
+}
+
+.reference-card__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.result-preview {
+  width: 100%;
+  min-height: 140px;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(3, 9, 15, 0.66);
 }
 
 .history-item {
