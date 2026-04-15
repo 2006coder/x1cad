@@ -28,6 +28,7 @@ import type { OrbitControls as OrbitControlsImpl, TransformControls as Transform
 import {
   Box3,
   Color,
+  DoubleSide,
   Group,
   MathUtils,
   Matrix3,
@@ -91,6 +92,8 @@ const workplaneBasis = new Matrix4()
 const helperQuaternion = new Quaternion()
 const fallbackXAxis = new Vector3(1, 0, 0)
 const fallbackZAxis = new Vector3(0, 0, 1)
+const workspacePlaneSize = 240
+const surfacePlaneSize = 72
 
 interface ViewportBridgeState {
   camera: Camera | null
@@ -568,7 +571,7 @@ function CameraDirector({
     }
 
     if (cameraRequestKind === 'focusSelected' || cameraRequestKind === 'focusScene') {
-      bounds.refresh(targetObject).clip().fit()
+      bounds.refresh(targetObject).fit()
       return
     }
 
@@ -646,6 +649,11 @@ export function SceneViewport() {
     activeTool === 'move' ? 'translate' : activeTool === 'rotate' ? 'rotate' : 'scale'
   const workplaneLabel =
     workplane.mode === 'surface' ? workplane.label || 'Surface workplane' : 'Workspace plane'
+  const activePlaneSize = workplane.mode === 'surface' ? surfacePlaneSize : workspacePlaneSize
+  const activePlaneDivisions = workplane.mode === 'surface' ? 12 : 48
+  const activePlaneColor = workplane.mode === 'surface' ? '#facc15' : '#2dd4bf'
+  const activeGridColor = workplane.mode === 'surface' ? '#f59e0b' : '#163447'
+  const activePlaneOpacity = workplane.mode === 'surface' ? 0.16 : 0.08
   const workplaneQuaternion = useMemo(() => {
     workplaneNormal.set(...workplane.normal)
     if (workplaneNormal.lengthSq() < 1e-6) {
@@ -867,7 +875,7 @@ export function SceneViewport() {
       )}
 
       <Canvas
-        camera={{ fov: 42, position: [68, 42, 68] }}
+        camera={{ fov: 42, near: 0.1, far: 2400, position: [68, 42, 68] }}
         className="viewport-canvas"
         gl={{ antialias: true, preserveDrawingBuffer: true }}
         onPointerDown={handleViewportPointerDown}
@@ -880,7 +888,6 @@ export function SceneViewport() {
       >
         <ViewportBridge bridgeRef={viewportBridgeRef} />
         <color attach="background" args={['#07131c']} />
-        <fog attach="fog" args={['#07131c', 120, 220]} />
         <ambientLight intensity={0.9} />
         <hemisphereLight color="#cce8ff" groundColor="#091827" intensity={0.8} />
         <directionalLight
@@ -891,21 +898,29 @@ export function SceneViewport() {
           shadow-mapSize-width={2048}
         />
         <Environment preset="city" environmentIntensity={0.24} />
-        <gridHelper args={[240, 48, '#2dd4bf', '#163447']} position={[0, 0, 0]} />
         <axesHelper args={[24]} />
 
-        {workplane.mode === 'surface' ? (
-          <group position={workplane.origin} quaternion={workplaneQuaternion}>
-            <gridHelper args={[72, 12, '#facc15', '#f59e0b']} />
-            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
-              <circleGeometry args={[28, 48]} />
-              <meshBasicMaterial color="#facc15" depthWrite={false} opacity={0.08} transparent />
-            </mesh>
+        <group position={workplane.origin} quaternion={workplaneQuaternion}>
+          <mesh position={[0, -0.06, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={0}>
+            <planeGeometry args={[activePlaneSize, activePlaneSize]} />
+            <meshBasicMaterial
+              color={activePlaneColor}
+              depthWrite={false}
+              opacity={activePlaneOpacity}
+              side={DoubleSide}
+              transparent
+            />
+          </mesh>
+          <gridHelper
+            args={[activePlaneSize, activePlaneDivisions, activePlaneColor, activeGridColor]}
+            position={[0, 0.02, 0]}
+          />
+          {workplane.mode === 'surface' ? (
             <Html position={[0, 4, 0]} center distanceFactor={10}>
               <div className="selection-tag selection-tag--workplane">{workplaneLabel}</div>
             </Html>
-          </group>
-        ) : null}
+          ) : null}
+        </group>
 
         <Bounds margin={1.15}>
           <group ref={sceneRef}>
@@ -994,8 +1009,8 @@ export function SceneViewport() {
           ref={orbitRef}
           enableDamping
           makeDefault
-          maxDistance={180}
-          minDistance={24}
+          maxDistance={720}
+          minDistance={12}
           target={selectedObjectVisible?.position ?? [0, 10, 0]}
         />
       </Canvas>
