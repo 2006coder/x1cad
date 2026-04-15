@@ -3,7 +3,11 @@ import { Eye, EyeOff, Lock, LockOpen, Search } from 'lucide-react'
 
 import { useCadStore } from '../store/useCadStore'
 
-export function SceneTree() {
+interface SceneTreeProps {
+  showHeading?: boolean
+}
+
+export function SceneTree({ showHeading = true }: SceneTreeProps) {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const sceneObjects = useCadStore((state) => state.sceneObjects)
@@ -27,10 +31,12 @@ export function SceneTree() {
   }, [deferredQuery, sceneObjects])
 
   return (
-    <section className="sidebar-section">
-      <div className="section-heading">
-        <span>Scene Tree</span>
-      </div>
+    <section className={showHeading ? 'sidebar-section' : 'scene-tree-panel'}>
+      {showHeading ? (
+        <div className="section-heading">
+          <span>Scene Tree</span>
+        </div>
+      ) : null}
 
       <label className="search-shell">
         <Search size={14} />

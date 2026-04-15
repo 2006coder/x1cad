@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
+import { useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react'
 import {
   Bot,
   Copy,
@@ -18,6 +18,7 @@ import {
   WandSparkles,
 } from 'lucide-react'
 
+import { CollapsibleRailSection } from './CollapsibleRailSection'
 import { estimateSceneObjectTriangles, getPrimitiveDefinition } from '../data/primitives'
 import { useAiGeneration } from '../hooks/useAiGeneration'
 import { useCadStore } from '../store/useCadStore'
@@ -39,26 +40,6 @@ interface InspectorPanelProps {
 }
 
 const axisLabels = ['X', 'Y', 'Z'] as const
-
-function Section({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: typeof SquareDashedMousePointer
-  title: string
-  children: ReactNode
-}) {
-  return (
-    <section className="inspector-section">
-      <div className="section-heading">
-        <Icon size={16} />
-        <span>{title}</span>
-      </div>
-      {children}
-    </section>
-  )
-}
 
 function NumberInput({
   label,
@@ -329,7 +310,12 @@ export function InspectorPanel({
 
   return (
     <aside className="inspector panel">
-      <Section icon={SquareDashedMousePointer} title="Selection">
+      <CollapsibleRailSection
+        badge={selectedObject ? selectedObject.name : 'None'}
+        defaultOpen
+        icon={SquareDashedMousePointer}
+        title="Selection"
+      >
         {selectedObject ? (
           <div className="selection-details">
             <div className="selection-header">
@@ -483,9 +469,14 @@ export function InspectorPanel({
             <p>Select a primitive in the scene or add one from the left panel to begin editing.</p>
           </div>
         )}
-      </Section>
+      </CollapsibleRailSection>
 
-      <Section icon={SwatchBook} title="Display & Metrics">
+      <CollapsibleRailSection
+        badge={`${viewMode} view`}
+        defaultOpen={false}
+        icon={SwatchBook}
+        title="Display & Metrics"
+      >
         <div className="precision-grid">
           <div className="pill-group">
             {(['world', 'local'] as const).map((space) => (
@@ -535,9 +526,14 @@ export function InspectorPanel({
             </div>
           ) : null}
         </div>
-      </Section>
+      </CollapsibleRailSection>
 
-      <Section icon={Bot} title="AI Studio">
+      <CollapsibleRailSection
+        badge={systemStatus.ai_capability.enabled ? systemStatus.ai_capability.mode : 'Offline'}
+        defaultOpen
+        icon={Bot}
+        title="AI Studio"
+      >
         <div className="ai-card">
           <div className={`ai-capability-banner ${systemStatus.ai_capability.enabled ? 'ready' : 'locked'}`}>
             <div>
@@ -1024,9 +1020,14 @@ export function InspectorPanel({
 
           {aiGeneration.error ? <p className="inline-error">{aiGeneration.error}</p> : null}
         </div>
-      </Section>
+      </CollapsibleRailSection>
 
-      <Section icon={HardDriveDownload} title="System">
+      <CollapsibleRailSection
+        badge={backendOnline ? 'Online' : 'Offline'}
+        defaultOpen={false}
+        icon={HardDriveDownload}
+        title="System"
+      >
         <div className="hardware-card">
           <div className="hardware-row">
             <span>Platform</span>
@@ -1065,7 +1066,7 @@ export function InspectorPanel({
           ))}
           {error ? <p className="inline-error">{error}</p> : null}
         </div>
-      </Section>
+      </CollapsibleRailSection>
     </aside>
   )
 }

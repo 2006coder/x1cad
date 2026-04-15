@@ -33,6 +33,7 @@ import {
   MathUtils,
   Matrix3,
   Matrix4,
+  MOUSE,
   Mesh,
   Quaternion,
   Raycaster,
@@ -92,8 +93,9 @@ const workplaneBasis = new Matrix4()
 const helperQuaternion = new Quaternion()
 const fallbackXAxis = new Vector3(1, 0, 0)
 const fallbackZAxis = new Vector3(0, 0, 1)
-const workspacePlaneSize = 240
-const surfacePlaneSize = 72
+const workspacePlaneSize = 160
+const surfacePlaneSize = 48
+const orbitMouseDisabled = -1
 
 interface ViewportBridgeState {
   camera: Camera | null
@@ -236,8 +238,8 @@ const PrimitiveNode = forwardRef<
     <group ref={ref} position={object.position} rotation={groupRotation} scale={object.scale}>
       {object.type === 'roundedBox' ? (
         <RoundedBox
-          args={[params.width ?? 28, params.height ?? 16, params.depth ?? 20]}
-          radius={Math.min(params.cornerRadius ?? 2.5, 12)}
+          args={[params.width ?? 16, params.height ?? 9, params.depth ?? 12]}
+          radius={Math.min(params.cornerRadius ?? 1.8, 12)}
           smoothness={Math.round(params.cornerSegments ?? 4)}
           {...commonProps}
         >
@@ -247,12 +249,12 @@ const PrimitiveNode = forwardRef<
       ) : (
         <mesh {...commonProps}>
           {object.type === 'box' && (
-            <boxGeometry args={[params.width ?? 32, params.height ?? 18, params.depth ?? 24]} />
+            <boxGeometry args={[params.width ?? 18, params.height ?? 10, params.depth ?? 14]} />
           )}
           {object.type === 'sphere' && (
             <sphereGeometry
               args={[
-                params.radius ?? 14,
+                params.radius ?? 7,
                 Math.round(params.widthSegments ?? 32),
                 Math.round(params.heightSegments ?? 24),
               ]}
@@ -261,9 +263,9 @@ const PrimitiveNode = forwardRef<
           {object.type === 'cylinder' && (
             <cylinderGeometry
               args={[
-                params.radiusTop ?? 10,
-                params.radiusBottom ?? 10,
-                params.height ?? 26,
+                params.radiusTop ?? 5.5,
+                params.radiusBottom ?? 5.5,
+                params.height ?? 14,
                 Math.round(params.radialSegments ?? 28),
               ]}
             />
@@ -271,8 +273,8 @@ const PrimitiveNode = forwardRef<
           {object.type === 'cone' && (
             <coneGeometry
               args={[
-                params.radius ?? 12,
-                params.height ?? 28,
+                params.radius ?? 6.5,
+                params.height ?? 16,
                 Math.round(params.radialSegments ?? 28),
               ]}
             />
@@ -280,8 +282,8 @@ const PrimitiveNode = forwardRef<
           {object.type === 'torus' && (
             <torusGeometry
               args={[
-                params.majorRadius ?? 14,
-                params.tubeRadius ?? 4,
+                params.majorRadius ?? 8,
+                params.tubeRadius ?? 2.4,
                 Math.round(params.radialSegments ?? 24),
                 Math.round(params.tubularSegments ?? 96),
                 degreesToRadians(params.arc ?? 360),
@@ -291,8 +293,8 @@ const PrimitiveNode = forwardRef<
           {object.type === 'capsule' && (
             <capsuleGeometry
               args={[
-                params.radius ?? 8,
-                params.cylinderLength ?? 18,
+                params.radius ?? 4.5,
+                params.cylinderLength ?? 10,
                 Math.round(params.capSegments ?? 12),
                 Math.round(params.radialSegments ?? 24),
               ]}
@@ -301,9 +303,9 @@ const PrimitiveNode = forwardRef<
           {object.type === 'prism' && (
             <cylinderGeometry
               args={[
-                params.circumradius ?? 12,
-                params.circumradius ?? 12,
-                params.height ?? 24,
+                params.circumradius ?? 7,
+                params.circumradius ?? 7,
+                params.height ?? 14,
                 Math.max(3, Math.round(params.sides ?? 6)),
               ]}
             />
@@ -312,8 +314,8 @@ const PrimitiveNode = forwardRef<
             <cylinderGeometry
               args={[
                 0,
-                params.baseRadius ?? 13,
-                params.height ?? 28,
+                params.baseRadius ?? 7.5,
+                params.height ?? 16,
                 Math.max(3, Math.round(params.sides ?? 4)),
               ]}
             />
@@ -626,6 +628,7 @@ export function SceneViewport() {
   const selectedRef = useRef<Group | null>(null)
   const viewportBridgeRef = useRef<ViewportBridgeState>({ camera: null, canvas: null })
   const [workplaneDropActive, setWorkplaneDropActive] = useState(false)
+  const [shiftPanEnabled, setShiftPanEnabled] = useState(false)
 
   const visibleObjects = useMemo(
     () => sceneObjects.filter((object) => !object.hidden),
@@ -642,17 +645,16 @@ export function SceneViewport() {
   const transformEnabled =
     !!selectedObjectVisible &&
     !selectedObjectVisible.locked &&
-    activeTool !== 'select' &&
     !workplanePlacementActive
   const transformMode =
-    activeTool === 'move' ? 'translate' : activeTool === 'rotate' ? 'rotate' : 'scale'
+    activeTool === 'rotate' ? 'rotate' : activeTool === 'scale' ? 'scale' : 'translate'
   const workplaneLabel =
     workplane.mode === 'surface' ? workplane.label || 'Surface workplane' : 'Workspace plane'
   const activePlaneSize = workplane.mode === 'surface' ? surfacePlaneSize : workspacePlaneSize
-  const activePlaneDivisions = workplane.mode === 'surface' ? 12 : 48
+  const activePlaneDivisions = workplane.mode === 'surface' ? 24 : 80
   const activePlaneColor = workplane.mode === 'surface' ? '#facc15' : '#2dd4bf'
   const activeGridColor = workplane.mode === 'surface' ? '#f59e0b' : '#163447'
-  const activePlaneOpacity = workplane.mode === 'surface' ? 0.16 : 0.08
+  const activePlaneOpacity = workplane.mode === 'surface' ? 0.2 : 0.06
   const workplaneQuaternion = useMemo(() => {
     workplaneNormal.set(...workplane.normal)
     if (workplaneNormal.lengthSq() < 1e-6) {
@@ -743,9 +745,44 @@ export function SceneViewport() {
     commitSurfacePick(pick)
   }
 
+  useEffect(() => {
+    function handleKeyChange(event: KeyboardEvent) {
+      if (event.key !== 'Shift') {
+        return
+      }
+
+      setShiftPanEnabled(event.type === 'keydown')
+    }
+
+    function resetShiftPan() {
+      setShiftPanEnabled(false)
+    }
+
+    window.addEventListener('keydown', handleKeyChange)
+    window.addEventListener('keyup', handleKeyChange)
+    window.addEventListener('blur', resetShiftPan)
+    return () => {
+      window.removeEventListener('keydown', handleKeyChange)
+      window.removeEventListener('keyup', handleKeyChange)
+      window.removeEventListener('blur', resetShiftPan)
+    }
+  }, [])
+
+  useEffect(() => {
+    const orbit = orbitRef.current
+    if (!orbit) {
+      return
+    }
+
+    orbit.mouseButtons.LEFT = (shiftPanEnabled ? MOUSE.PAN : orbitMouseDisabled) as never
+    orbit.mouseButtons.MIDDLE = MOUSE.DOLLY
+    orbit.mouseButtons.RIGHT = MOUSE.ROTATE
+  }, [shiftPanEnabled])
+
   return (
     <section
       className="viewport-panel panel"
+      onContextMenu={(event) => event.preventDefault()}
       onDragEnter={(event) => {
         if (!isWorkplaneDrag(event)) {
           return
@@ -786,7 +823,13 @@ export function SceneViewport() {
         </div>
         <div className="metric-chip">
           <span>Editing</span>
-          <strong>{selectedObjectVisible?.locked ? 'Locked' : activeTool}</strong>
+          <strong>
+            {selectedObjectVisible?.locked
+              ? 'Locked'
+              : activeTool === 'select' && selectedObjectVisible
+                ? 'translate'
+                : activeTool}
+          </strong>
         </div>
         <div className="metric-chip">
           <span>Workplane</span>
@@ -829,9 +872,8 @@ export function SceneViewport() {
             <span className="guide-eyebrow">Quick start</span>
             <h2>Start with primitives, then refine them directly in the viewport</h2>
             <p>
-              Use <strong>G</strong>, <strong>R</strong>, and <strong>S</strong> for transform
-              modes, drag the gizmo handles for direct editing, and use the inspector for exact
-              values.
+              Left click selects and edits with the gizmo, <strong>right drag</strong> orbits the
+              camera, and <strong>Shift + left drag</strong> pans the workspace.
             </p>
           </div>
           <button className="secondary-button" onClick={() => dismissOnboarding()} type="button">
@@ -866,7 +908,7 @@ export function SceneViewport() {
       )}
 
       <Canvas
-        camera={{ fov: 42, near: 0.1, far: 2400, position: [68, 42, 68] }}
+        camera={{ fov: 42, near: 0.1, far: 2400, position: [42, 28, 42] }}
         className="viewport-canvas"
         gl={{ antialias: true, preserveDrawingBuffer: true }}
         onPointerDown={handleViewportPointerDown}
@@ -889,7 +931,7 @@ export function SceneViewport() {
           shadow-mapSize-width={2048}
         />
         <Environment preset="city" environmentIntensity={0.24} />
-        <axesHelper args={[24]} />
+        <axesHelper args={[12]} />
 
         <group position={workplane.origin} quaternion={workplaneQuaternion}>
           <mesh position={[0, -0.06, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={0}>
@@ -994,14 +1036,14 @@ export function SceneViewport() {
           color="#081923"
           opacity={0.45}
           position={[0, 0, 0]}
-          scale={180}
+          scale={120}
         />
         <OrbitControls
           ref={orbitRef}
           enableDamping
           makeDefault
-          maxDistance={720}
-          minDistance={12}
+          maxDistance={960}
+          minDistance={4}
         />
       </Canvas>
 
@@ -1043,7 +1085,7 @@ export function SceneViewport() {
       <div className="viewport-overlay viewport-overlay--hud">
         <div className="hud-card">
           <span className="guide-eyebrow">Shortcuts</span>
-          <p>`G` move, `R` rotate, `S` scale, `F` focus, arrows/PageUp/PageDown nudge.</p>
+          <p>`RMB` orbit, `Shift + LMB` pan, wheel zoom, `G/R/S` transform, `F` focus.</p>
         </div>
       </div>
 

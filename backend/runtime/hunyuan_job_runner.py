@@ -157,11 +157,15 @@ def merge_warnings(existing: str | None, new_warning: str | None) -> str | None:
         return existing
     if not existing:
         return new_warning
+    if new_warning in existing:
+        return existing
+    if existing in new_warning:
+        return new_warning
     return f"{existing} {new_warning}"
 
 
 def square_resolution(target_resolution: int) -> int:
-    return {256: 384, 384: 512, 512: 512}.get(target_resolution, 512)
+    return {256: 384, 384: 640, 512: 768}.get(target_resolution, 640)
 
 
 def normalize_prompt(prompt: str, *, repair: bool = False) -> str:
@@ -389,15 +393,17 @@ def effective_paint_settings(torch, requested_resolution: int) -> tuple[int, int
     total_memory_gb = gpu_total_vram_gb(torch)
     total_ram_gb = system_total_ram_gb()
     if (total_memory_gb is not None and total_memory_gb <= 16.5) or total_ram_gb <= 32.5:
+        if requested_resolution >= 512:
+            return 384, 2, 1024, 1536
         if requested_resolution >= 384:
-            return 256, 2, 1024, 1024
+            return 320, 2, 1024, 1536
         return 256, 2, 768, 1024
 
     if requested_resolution >= 512:
-        return 384, 3, 1536, 2048
+        return 512, 4, 1536, 2048
     if requested_resolution >= 384:
         return 384, 3, 1280, 2048
-    return 256, 2, 1024, 1024
+    return 320, 2, 1024, 1536
 
 
 def effective_shape_settings(torch, requested_resolution: int) -> tuple[int, int]:
@@ -406,14 +412,16 @@ def effective_shape_settings(torch, requested_resolution: int) -> tuple[int, int
 
     if (total_memory_gb is not None and total_memory_gb <= 16.5) or total_ram_gb <= 32.5:
         if requested_resolution >= 512:
-            return 320, 8000
-        return 256, 8000
+            return 384, 5000
+        if requested_resolution >= 384:
+            return 320, 6000
+        return 256, 6000
 
     if requested_resolution >= 512:
         return 384, 8000
     if requested_resolution >= 384:
-        return 320, 8000
-    return 256, 8000
+        return 384, 7000
+    return 320, 6000
 
 
 def image_has_clean_light_background(image: Image.Image) -> bool:
@@ -556,7 +564,7 @@ def build_shape_attempts(image: Image.Image, mode: str, requested_resolution: in
     if needs_stabilized_variant:
         stabilized = stabilized_shape_reference(
             image,
-            min(square_resolution(requested_resolution), 384),
+            min(square_resolution(requested_resolution), 512),
         )
         for seed in (42, 2024):
             attempts.append(
@@ -698,6 +706,7 @@ def materialize_text_or_hybrid_reference(
         if mode == "text"
         else "Loading Z-Image-Turbo to refine the reference image with the prompt before shape generation."
     )
+    bridge_steps = 12 if resolution >= 384 else 10
 
     progress(
         status_path=status_path,
@@ -795,7 +804,7 @@ def materialize_text_or_hybrid_reference(
                         attempt_prompt,
                         height=profile["guide_size"],
                         width=profile["guide_size"],
-                        num_inference_steps=9,
+                        num_inference_steps=bridge_steps,
                         guidance_scale=0.0,
                         generator=generator,
                         output_type="pil",
@@ -810,7 +819,7 @@ def materialize_text_or_hybrid_reference(
                         height=profile["guide_size"],
                         width=profile["guide_size"],
                         strength=strength,
-                        num_inference_steps=9,
+                        num_inference_steps=bridge_steps,
                         guidance_scale=0.0,
                         generator=generator,
                         output_type="pil",

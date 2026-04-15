@@ -20,7 +20,7 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     category: 'Core Solids',
     description: 'Precise rectangular solid for architectural and fixture-style modeling.',
     accent: '#7dd3fc',
-    defaults: { width: 32, height: 18, depth: 24 },
+    defaults: { width: 18, height: 10, depth: 14 },
     fields: [
       { key: 'width', label: 'Width', min: 6, max: 160, step: 1, unit: 'mm' },
       { key: 'height', label: 'Height', min: 6, max: 160, step: 1, unit: 'mm' },
@@ -34,10 +34,10 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     description: 'Chamfer-friendly housing block with live corner radius control.',
     accent: '#5eead4',
     defaults: {
-      width: 28,
-      height: 16,
-      depth: 20,
-      cornerRadius: 2.5,
+      width: 16,
+      height: 9,
+      depth: 12,
+      cornerRadius: 1.8,
       cornerSegments: 4,
     },
     fields: [
@@ -54,7 +54,7 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     category: 'Core Solids',
     description: 'High-fidelity radial primitive with editable tessellation density.',
     accent: '#f9a8d4',
-    defaults: { radius: 14, widthSegments: 32, heightSegments: 24 },
+    defaults: { radius: 7, widthSegments: 32, heightSegments: 24 },
     fields: [
       { key: 'radius', label: 'Radius', min: 4, max: 80, step: 1, unit: 'mm' },
       { key: 'widthSegments', label: 'Width Segments', min: 8, max: 96, step: 1 },
@@ -67,7 +67,7 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     category: 'Mechanical',
     description: 'Parametric cylindrical solid with independent top and bottom radii.',
     accent: '#fdba74',
-    defaults: { radiusTop: 10, radiusBottom: 10, height: 26, radialSegments: 28 },
+    defaults: { radiusTop: 5.5, radiusBottom: 5.5, height: 14, radialSegments: 28 },
     fields: [
       { key: 'radiusTop', label: 'Top Radius', min: 2, max: 80, step: 1, unit: 'mm' },
       { key: 'radiusBottom', label: 'Bottom Radius', min: 2, max: 80, step: 1, unit: 'mm' },
@@ -81,7 +81,7 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     category: 'Mechanical',
     description: 'Tapered solid for guides, nozzles, and silhouette-driven forms.',
     accent: '#fb7185',
-    defaults: { radius: 12, height: 28, radialSegments: 28 },
+    defaults: { radius: 6.5, height: 16, radialSegments: 28 },
     fields: [
       { key: 'radius', label: 'Base Radius', min: 3, max: 80, step: 1, unit: 'mm' },
       { key: 'height', label: 'Height', min: 6, max: 160, step: 1, unit: 'mm' },
@@ -95,8 +95,8 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     description: 'Donut-style profile for rings, seals, cable loops, and round handles.',
     accent: '#c084fc',
     defaults: {
-      majorRadius: 14,
-      tubeRadius: 4,
+      majorRadius: 8,
+      tubeRadius: 2.4,
       radialSegments: 24,
       tubularSegments: 96,
       arc: 360,
@@ -116,8 +116,8 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     description: 'Rounded industrial primitive ideal for ergonomic or molded geometry.',
     accent: '#818cf8',
     defaults: {
-      radius: 8,
-      cylinderLength: 18,
+      radius: 4.5,
+      cylinderLength: 10,
       capSegments: 12,
       radialSegments: 24,
     },
@@ -134,7 +134,7 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     category: 'Polygonal',
     description: 'Fast polygonal prism for fixtures, sockets, and indexed machining forms.',
     accent: '#4ade80',
-    defaults: { circumradius: 12, height: 24, sides: 6 },
+    defaults: { circumradius: 7, height: 14, sides: 6 },
     fields: [
       { key: 'circumradius', label: 'Circumradius', min: 3, max: 80, step: 1, unit: 'mm' },
       { key: 'height', label: 'Height', min: 6, max: 160, step: 1, unit: 'mm' },
@@ -147,7 +147,7 @@ export const primitiveCatalog: PrimitiveDefinition[] = [
     category: 'Polygonal',
     description: 'Angular tapered primitive for obelisks, jigs, and directional forms.',
     accent: '#facc15',
-    defaults: { baseRadius: 13, height: 28, sides: 4 },
+    defaults: { baseRadius: 7.5, height: 16, sides: 4 },
     fields: [
       { key: 'baseRadius', label: 'Base Radius', min: 3, max: 80, step: 1, unit: 'mm' },
       { key: 'height', label: 'Height', min: 6, max: 160, step: 1, unit: 'mm' },
@@ -288,8 +288,8 @@ function placementGrid(existingCount: number, rowOffset: number) {
   const column = existingCount % 3
   const row = Math.floor(existingCount / 3)
   return {
-    x: column * 34 - 34,
-    z: row * 32 + rowOffset,
+    x: column * 20 - 20,
+    z: row * 18 + rowOffset,
   }
 }
 
@@ -340,7 +340,7 @@ export function createSceneObject(
     name: `${definition.label} ${existingCount + 1}`,
     color: definition.accent,
     params,
-    position: positionOnWorkplane(existingCount, -18, groundOffset(type, params), workplane),
+    position: positionOnWorkplane(existingCount, -10, groundOffset(type, params), workplane),
     rotation: rotationFromWorkplane(workplane),
     scale: [1, 1, 1],
     hidden: false,
@@ -361,7 +361,7 @@ export function createSceneObjectFromAiResult(
     name: result.preview_name,
     color: result.suggested_color,
     params: {},
-    position: positionOnWorkplane(existingCount, 6, 12 + existingCount * 0.2, workplane),
+    position: positionOnWorkplane(existingCount, 4, 8 + existingCount * 0.15, workplane),
     rotation: rotationFromWorkplane(workplane),
     scale: [1, 1, 1],
     hidden: false,
@@ -397,7 +397,7 @@ export function createSceneObjectFromAiSuggestion(
     params,
     position: positionOnWorkplane(
       existingCount,
-      22,
+      12,
       groundOffset(result.suggested_primitive, params),
       workplane,
     ),
@@ -413,29 +413,29 @@ export function createSceneObjectFromAiSuggestion(
 export function buildDemoScene(): SceneObject[] {
   const box = createSceneObject('roundedBox', 0)
   box.name = 'Enclosure'
-  box.position = [-28, 10, -10]
-  box.params = { ...box.params, width: 42, height: 20, depth: 28, cornerRadius: 3.5 }
+  box.position = [-14, 5, -6]
+  box.params = { ...box.params, width: 24, height: 12, depth: 16, cornerRadius: 2.4 }
 
   const cylinder = createSceneObject('cylinder', 1)
   cylinder.name = 'Column'
-  cylinder.position = [8, 16, -4]
-  cylinder.params = { ...cylinder.params, height: 32, radiusTop: 9, radiusBottom: 9 }
+  cylinder.position = [4, 9, -2]
+  cylinder.params = { ...cylinder.params, height: 18, radiusTop: 5, radiusBottom: 5 }
 
   const prism = createSceneObject('prism', 2)
   prism.name = 'Socket'
-  prism.position = [38, 11, -8]
-  prism.params = { ...prism.params, height: 22, sides: 6, circumradius: 12 }
+  prism.position = [20, 6, -4]
+  prism.params = { ...prism.params, height: 12, sides: 6, circumradius: 7 }
 
   const torus = createSceneObject('torus', 3)
   torus.name = 'Seal Ring'
-  torus.position = [-8, 4, 28]
+  torus.position = [-4, 2.4, 14]
   torus.rotation = [90, 0, 0]
-  torus.params = { ...torus.params, majorRadius: 15, tubeRadius: 4, tubularSegments: 96 }
+  torus.params = { ...torus.params, majorRadius: 9, tubeRadius: 2.4, tubularSegments: 96 }
 
   const sphere = createSceneObject('sphere', 4)
   sphere.name = 'Ball Joint'
-  sphere.position = [22, 14, 24]
-  sphere.params = { ...sphere.params, radius: 14 }
+  sphere.position = [12, 7, 13]
+  sphere.params = { ...sphere.params, radius: 7 }
 
   return [box, cylinder, prism, torus, sphere]
 }

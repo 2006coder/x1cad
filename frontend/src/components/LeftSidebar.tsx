@@ -3,6 +3,7 @@ import { FolderKanban, Search, Shapes, Sparkles } from 'lucide-react'
 
 import { primitiveCatalog } from '../data/primitives'
 import { useCadStore } from '../store/useCadStore'
+import { CollapsibleRailSection } from './CollapsibleRailSection'
 import { SceneTree } from './SceneTree'
 
 export function LeftSidebar() {
@@ -18,7 +19,8 @@ export function LeftSidebar() {
     }
 
     return primitiveCatalog.filter((primitive) => {
-      const haystack = `${primitive.label} ${primitive.category} ${primitive.description}`.toLowerCase()
+      const haystack =
+        `${primitive.label} ${primitive.category} ${primitive.description}`.toLowerCase()
       return haystack.includes(query)
     })
   }, [deferredSearch])
@@ -28,11 +30,12 @@ export function LeftSidebar() {
 
   return (
     <aside className="sidebar panel">
-      <section className="sidebar-section">
-        <div className="section-heading">
-          <FolderKanban size={16} />
-          <span>Workspace</span>
-        </div>
+      <CollapsibleRailSection
+        badge={`${visibleCount} visible`}
+        defaultOpen
+        icon={FolderKanban}
+        title="Workspace"
+      >
         <div className="project-summary-card project-summary-card--glow">
           <div className="project-summary-card__header">
             <div>
@@ -56,13 +59,19 @@ export function LeftSidebar() {
             </div>
           </div>
         </div>
-      </section>
 
-      <section className="sidebar-section">
-        <div className="section-heading">
-          <Shapes size={16} />
-          <span>Primitive Library</span>
+        <div className="sidebar-note">
+          Keep the scene tree tidy as the assembly grows. Hidden objects leave the viewport
+          immediately, and locked objects stay visible without letting accidental edits slip in.
         </div>
+      </CollapsibleRailSection>
+
+      <CollapsibleRailSection
+        badge={`${filteredPrimitives.length} shapes`}
+        defaultOpen
+        icon={Shapes}
+        title="Primitive Library"
+      >
         <label className="search-shell">
           <Search size={14} />
           <input
@@ -98,20 +107,16 @@ export function LeftSidebar() {
             </article>
           ))}
         </div>
-      </section>
+      </CollapsibleRailSection>
 
-      <section className="sidebar-section">
-        <div className="section-heading">
-          <Sparkles size={16} />
-          <span>Assembly Control</span>
-        </div>
-        <div className="sidebar-note">
-          Use the scene tree to rename, lock, or hide parts as your model grows. Hidden objects are
-          removed from the viewport immediately, and locked objects stay selectable but non-editable.
-        </div>
-      </section>
-
-      <SceneTree />
+      <CollapsibleRailSection
+        badge={`${sceneObjects.length} items`}
+        defaultOpen
+        icon={Sparkles}
+        title="Scene Tree"
+      >
+        <SceneTree showHeading={false} />
+      </CollapsibleRailSection>
     </aside>
   )
 }

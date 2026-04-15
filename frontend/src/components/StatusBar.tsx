@@ -13,6 +13,7 @@ export function StatusBar({ systemStatus, backendOnline }: StatusBarProps) {
   const snapIncrement = useCadStore((state) => state.snapIncrement)
   const workplane = useCadStore((state) => state.workplane)
   const workplanePlacementActive = useCadStore((state) => state.workplanePlacementActive)
+  const viewMode = useCadStore((state) => state.viewMode)
   const selectedObject = useSelectedObject()
 
   const estimatedTriangles = sceneObjects
@@ -59,6 +60,14 @@ export function StatusBar({ systemStatus, backendOnline }: StatusBarProps) {
       <div className="statusbar__group">
         <span className="statusbar__label">Backend</span>
         <strong>{backendOnline ? systemStatus.hostname : 'Offline shell'}</strong>
+      </div>
+      <div className="statusbar__group">
+        <span className="statusbar__label">Display</span>
+        <strong>{viewMode}</strong>
+      </div>
+      <div className="statusbar__group statusbar__group--wide">
+        <span className="statusbar__label">Controls</span>
+        <strong>LMB select + gizmo | Shift + LMB pan | RMB orbit | Wheel zoom</strong>
       </div>
     </footer>
   )

@@ -14,7 +14,7 @@ const initialRequest: GenerationRequest = {
   prompt: 'Compact desktop enclosure with rounded edges and mounting tabs',
   mode: 'text',
   generate_texture: false,
-  resolution: 384,
+  resolution: 512,
   reference_image: null,
 }
 
