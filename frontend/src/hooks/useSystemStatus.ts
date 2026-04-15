@@ -26,9 +26,11 @@ const fallbackSystemStatus: SystemStatus = {
 const fallbackModelStatus: ModelStatus = {
   runtime_repo_present: false,
   runtime_env_ready: false,
+  runtime_torch_version: null,
   shape_model_downloaded: false,
   paint_model_downloaded: false,
   texture_pipeline_ready: false,
+  texture_blocker: null,
   reference_image_required: true,
   text_to_3d_supported: false,
   image_to_3d_supported: false,

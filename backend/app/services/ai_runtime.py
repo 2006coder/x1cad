@@ -34,6 +34,7 @@ ZIMAGE_MODEL_DIR = "z-image-turbo"
 TORCH_PACKAGE_VERSION = "2.6.0"
 TORCHVISION_PACKAGE_VERSION = "0.21.0"
 TORCHAUDIO_PACKAGE_VERSION = "2.6.0"
+SETUPTOOLS_PACKAGE_VERSION = "80.9.0"
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 BACKEND_DIR = ROOT_DIR / "backend"
@@ -125,13 +126,21 @@ def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
 
 
 def _runtime_torch_version() -> str | None:
+    return _runtime_distribution_version("torch")
+
+
+def _runtime_distribution_version(distribution_name: str) -> str | None:
     runtime_python = _runtime_python()
     if not runtime_python.exists():
         return None
 
     try:
         completed = subprocess.run(
-            [str(runtime_python), "-c", "from importlib.metadata import version; print(version('torch'))"],
+            [
+                str(runtime_python),
+                "-c",
+                f"from importlib.metadata import version; print(version({distribution_name!r}))",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -145,6 +154,29 @@ def _runtime_torch_version() -> str | None:
 
     version = completed.stdout.strip()
     return version or None
+
+
+def _runtime_module_available(module_name: str) -> bool:
+    runtime_python = _runtime_python()
+    if not runtime_python.exists():
+        return False
+
+    try:
+        completed = subprocess.run(
+            [
+                str(runtime_python),
+                "-c",
+                f"import importlib.util; print('1' if importlib.util.find_spec({module_name!r}) else '0')",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+    return completed.returncode == 0 and completed.stdout.strip() == "1"
 
 
 def _torch_supports_texture_pipeline(version: str | None) -> bool:
@@ -424,8 +456,21 @@ class HunyuanRuntimeManager:
             paint_downloaded and realesrgan_ready and custom_rasterizer_ready and mesh_inpaint_ready
         )
         torch_ready_for_textures = _torch_supports_texture_pipeline(runtime_torch_version)
+        pytorch_lightning_ready = _runtime_module_available("pytorch_lightning") if env_ready else False
+        pkg_resources_ready = _runtime_module_available("pkg_resources") if env_ready else False
+        paint_runtime_dependencies_ready = pytorch_lightning_ready and pkg_resources_ready
         texture_blocker: str | None = None
-        if native_paint_components_ready and not torch_ready_for_textures:
+        if paint_downloaded and not pytorch_lightning_ready:
+            texture_blocker = (
+                "Texture painting still needs the managed runtime dependency `pytorch-lightning==1.9.5` "
+                "from Tencent's official requirements."
+            )
+        elif paint_downloaded and not pkg_resources_ready:
+            texture_blocker = (
+                "Texture painting still needs a `setuptools<81` runtime because Tencent's paint stack "
+                "imports `pkg_resources`."
+            )
+        elif native_paint_components_ready and not torch_ready_for_textures:
             detected_version = runtime_torch_version or "unknown"
             texture_blocker = (
                 "Texture painting requires torch 2.6+ in the managed AI runtime because the Tencent "
@@ -435,7 +480,9 @@ class HunyuanRuntimeManager:
             texture_blocker = (
                 "Texture weights are present, but one or more native paint components are still missing."
             )
-        texture_pipeline_ready = native_paint_components_ready and torch_ready_for_textures
+        texture_pipeline_ready = (
+            native_paint_components_ready and torch_ready_for_textures and paint_runtime_dependencies_ready
+        )
 
         notes = [
             "x1cad runs Tencent Hunyuan3D 2.1 directly through a local managed runtime rather than Tencent's demo API server.",
@@ -453,6 +500,10 @@ class HunyuanRuntimeManager:
             notes.append(str(runtime_state["warning"]))
         if texture_blocker:
             notes.append(f"{texture_blocker} x1cad will gracefully fall back to shape-only generation until this is fixed.")
+        else:
+            notes.append(
+                "x1cad uses a conservative memory profile for guide generation, mesh extraction, and texture baking to avoid paging on 32 GB workstations."
+            )
 
         detail = (
             "Local AI runtime is ready for image-to-3D, prompt-to-image-to-3D, and prompt-guided hybrid generation."
@@ -527,7 +578,18 @@ class HunyuanRuntimeManager:
                 stage="Installing Python packages",
                 message="Installing the curated Hunyuan runtime dependencies.",
             )
-            _run_checked([str(runtime_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+            _run_checked(
+                [
+                    str(runtime_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "pip",
+                    "wheel",
+                    f"setuptools=={SETUPTOOLS_PACKAGE_VERSION}",
+                ]
+            )
             _run_checked(
                 [
                     str(runtime_python),
@@ -574,6 +636,16 @@ class HunyuanRuntimeManager:
                 urlretrieve(REALESRGAN_URL, realesrgan_path)
 
             try:
+                self._update_operation(
+                    progress=68,
+                    stage="Patching runtime repo",
+                    message="Applying x1cad compatibility patches to the cloned Hunyuan runtime.",
+                )
+                _run_checked(
+                    [str(runtime_python), str(RUNTIME_SCRIPTS_DIR / "patch_hunyuan_repo.py"), "--repo", str(REPO_DIR)],
+                    cwd=ROOT_DIR,
+                )
+
                 self._update_operation(
                     progress=74,
                     stage="Building rasterizer",

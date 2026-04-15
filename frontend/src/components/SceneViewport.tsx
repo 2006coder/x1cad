@@ -375,6 +375,7 @@ export function SceneViewport() {
   const sceneObjects = useCadStore((state) => state.sceneObjects)
   const selectedObjectId = useCadStore((state) => state.selectedObjectId)
   const activeTool = useCadStore((state) => state.activeTool)
+  const coordinateSpace = useCadStore((state) => state.coordinateSpace)
   const snapIncrement = useCadStore((state) => state.snapIncrement)
   const viewMode = useCadStore((state) => state.viewMode)
   const showOnboarding = useCadStore((state) => state.showOnboarding)
@@ -505,6 +506,7 @@ export function SceneViewport() {
                       key={object.id}
                       ref={transformRef}
                       mode={transformMode}
+                      space={coordinateSpace}
                       rotationSnap={MathUtils.degToRad(15)}
                       scaleSnap={0.05}
                       translationSnap={snapIncrement}

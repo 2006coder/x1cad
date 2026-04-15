@@ -212,7 +212,8 @@ export function InspectorPanel({
     !modelStatus.shape_model_downloaded ||
     (aiGeneration.request.mode === 'text' && !modelStatus.text_to_3d_supported) ||
     (aiGeneration.request.mode === 'image' && !modelStatus.image_to_3d_supported) ||
-    (aiGeneration.request.mode === 'hybrid' && !modelStatus.hybrid_supported)
+    (aiGeneration.request.mode === 'hybrid' && !modelStatus.hybrid_supported) ||
+    (aiGeneration.request.mode !== 'text' && !aiGeneration.request.reference_image?.trim())
 
   const currentResultPreview =
     currentResult && resolveApiUrl(currentResult.guide_image_url ?? currentResult.input_image_url)
@@ -747,6 +748,9 @@ export function InspectorPanel({
                 onChange={(event) =>
                   aiGeneration.setRequest((previous) => ({
                     ...previous,
+                    mode: event.target.value.trim()
+                      ? modeWithReference(previous.mode, modelStatus.hybrid_supported)
+                      : previous.mode,
                     reference_image: event.target.value,
                   }))
                 }
