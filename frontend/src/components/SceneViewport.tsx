@@ -974,6 +974,13 @@ export function SceneViewport() {
               })}
             </Suspense>
           </group>
+          <CameraDirector
+            cameraRequestKind={cameraRequest.kind}
+            cameraRequestToken={cameraRequest.token}
+            orbitRef={orbitRef}
+            sceneRef={sceneRef}
+            selectedRef={selectedRef}
+          />
         </Bounds>
 
         <ContactShadows
@@ -990,13 +997,6 @@ export function SceneViewport() {
           maxDistance={180}
           minDistance={24}
           target={selectedObjectVisible?.position ?? [0, 10, 0]}
-        />
-        <CameraDirector
-          cameraRequestKind={cameraRequest.kind}
-          cameraRequestToken={cameraRequest.token}
-          orbitRef={orbitRef}
-          sceneRef={sceneRef}
-          selectedRef={selectedRef}
         />
       </Canvas>
 
