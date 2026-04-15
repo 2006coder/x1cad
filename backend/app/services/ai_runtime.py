@@ -506,7 +506,7 @@ class HunyuanRuntimeManager:
             )
 
         detail = (
-            "Local AI runtime is ready for image-to-3D, prompt-to-image-to-3D, and prompt-guided hybrid generation."
+            "Local AI runtime is ready for image-to-3D, prompt-to-image-to-3D, and prompt-plus-image generation."
             if repo_present and env_ready and shape_downloaded
             else "Prepare the local Hunyuan runtime, then download the model weights to unlock real generation."
         )
@@ -527,7 +527,7 @@ class HunyuanRuntimeManager:
             reference_image_required=not zimage_downloaded,
             text_to_3d_supported=zimage_downloaded and shape_downloaded and env_ready,
             image_to_3d_supported=shape_downloaded and env_ready,
-            hybrid_supported=zimage_downloaded and shape_downloaded and env_ready,
+            hybrid_supported=shape_downloaded and env_ready,
             total_size_gb=12.0,
             detail=detail,
             repo_path=str(REPO_DIR),
@@ -763,7 +763,7 @@ class HunyuanRuntimeManager:
         if request.mode == "hybrid" and not status.hybrid_supported:
             raise HTTPException(
                 status_code=409,
-                detail="Download the prompt bridge before using prompt-guided hybrid generation.",
+                detail="Download the shape model before using prompt-plus-image generation.",
             )
         if request.mode in {"image", "hybrid"} and not request.reference_image:
             raise HTTPException(

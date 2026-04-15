@@ -63,7 +63,7 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
     }
 
     if (request.mode === 'hybrid' && !modelStatus.hybrid_supported) {
-      setError('Download the prompt bridge before starting prompt-guided hybrid generation.')
+      setError('Download the shape model before starting prompt-plus-image generation.')
       return
     }
 

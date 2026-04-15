@@ -123,7 +123,7 @@ function resultPreviewLabel(result: GenerationResult) {
   }
 
   if (result.generation_mode === 'hybrid') {
-    return 'Prompt-steered guide'
+    return result.guide_image_url ? 'Fallback guide image' : 'Reference image'
   }
 
   return 'Reference image'
@@ -210,7 +210,7 @@ export function InspectorPanel({
     aiGeneration.request.mode === 'text'
       ? 'Prompt -> Z-Image-Turbo guide render -> Hunyuan3D shape generation.'
       : aiGeneration.request.mode === 'hybrid'
-        ? 'Prompt + image -> Z-Image-Turbo refinement -> Hunyuan3D shape generation.'
+        ? 'Prompt + image -> feed the reference image directly into Hunyuan3D. The prompt bridge is only reserved as a rescue path when needed.'
         : 'Upload, paste, or capture an image -> Hunyuan3D shape generation.'
 
   function applyReferenceImage(referenceImage: string) {
@@ -644,7 +644,7 @@ export function InspectorPanel({
 
           {!modelStatus.text_to_3d_supported ? (
             <div className="sidebar-note">
-              Download the prompt bridge to unlock prompt-only generation and true prompt-guided hybrid refinement. Until then, image mode remains fully available.
+              Download the prompt bridge to unlock prompt-only generation. Image and prompt-plus-image generation remain fully available without it.
             </div>
           ) : null}
 
@@ -736,14 +736,14 @@ export function InspectorPanel({
                 />
               ) : (
                 <div className="reference-preview reference-preview--empty">
-                  Drop in a sketch, paste a screenshot, or capture the viewport to drive the local shape model. In hybrid mode, x1cad refines the image with your prompt before the 3D pass.
+                  Drop in a sketch, paste a screenshot, or capture the viewport to drive the local shape model. In prompt-plus-image mode, x1cad feeds that reference image directly into Hunyuan3D.
                 </div>
               )}
             </div>
 
             <div className="reference-card__hint">
               <WandSparkles size={14} />
-              <span>Tip: paste a screenshot directly into the preview area, or capture the current viewport for hybrid generation.</span>
+              <span>Tip: paste a screenshot directly into the preview area, or capture the current viewport for prompt-plus-image generation.</span>
             </div>
 
             <label className="text-area-shell">

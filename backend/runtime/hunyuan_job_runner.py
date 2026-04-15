@@ -599,10 +599,10 @@ def generate_shape_mesh(
     octree_resolution, num_chunks = effective_shape_settings(torch, requested_resolution)
     base_message = (
         "Running prompt-bootstrapped shape diffusion."
-        if mode in {"text", "hybrid"}
+        if mode == "text"
         else "Running image-guided shape diffusion."
     )
-    progress_value = 62 if mode in {"text", "hybrid"} else 42
+    progress_value = 62 if mode == "text" else 42
 
     shape_attempts = build_shape_attempts(image, mode, requested_resolution)
     total_attempts = len(shape_attempts)
@@ -928,52 +928,7 @@ def main(config_path: Path | None = None) -> None:
     elif mode == "hybrid":
         if original_reference_path is None:
             raise RuntimeError("Hybrid generation requires a reference image.")
-        if config.get("text_to_image_enabled", False):
-            try:
-                reference_image_path, bridge_warning = materialize_text_or_hybrid_reference(
-                    prompt=config["prompt"],
-                    mode="hybrid",
-                    source_image_path=original_reference_path,
-                    models_path=models_path,
-                    output_path=guide_image_path,
-                    resolution=config["resolution"],
-                    status_path=status_path,
-                    job_id=job_id,
-                    started_at=started_at,
-                )
-                warning = merge_warnings(warning, bridge_warning)
-            except Exception as exc:  # noqa: BLE001
-                try:
-                    reference_image_path, bridge_warning = materialize_text_or_hybrid_reference(
-                        prompt=config["prompt"],
-                        mode="text",
-                        source_image_path=None,
-                        models_path=models_path,
-                        output_path=guide_image_path,
-                        resolution=config["resolution"],
-                        status_path=status_path,
-                        job_id=job_id,
-                        started_at=started_at,
-                    )
-                    warning = merge_warnings(
-                        warning,
-                        (
-                            "Prompt-guided image refinement became unstable, so x1cad switched to a prompt-only guide image "
-                            f"to keep the hybrid job moving. Reason: {exc}"
-                        ),
-                    )
-                    warning = merge_warnings(warning, bridge_warning)
-                except Exception as text_exc:  # noqa: BLE001
-                    reference_image_path = original_reference_path
-                    warning = merge_warnings(
-                        warning,
-                        (
-                            "Prompt-guided image refinement could not complete, so x1cad continued with the original reference image. "
-                            f"Reason: {exc}. Prompt-only fallback also failed: {text_exc}"
-                        ),
-                    )
-        else:
-            reference_image_path = original_reference_path
+        reference_image_path = original_reference_path
     else:
         if original_reference_path is None:
             raise RuntimeError("Image-guided generation requires a reference image.")
@@ -1003,7 +958,7 @@ def main(config_path: Path | None = None) -> None:
         state="running",
         stage="Loading shape model",
         message="Loading Hunyuan3D-Shape after the guide stage has been fully unloaded.",
-        progress_value=46 if mode in {"text", "hybrid"} else 18,
+        progress_value=46 if mode == "text" else 18,
     )
 
     try:

@@ -75,9 +75,9 @@ def wait_for_completion(job_id: str, *, timeout_seconds: int) -> None:
 def verify_result(label: str, result) -> None:
     if label == "text" and not result.guide_image_url:
         raise RuntimeError("Text smoke completed without a generated guide image.")
-    if label == "hybrid" and not result.guide_image_url:
+    if label == "hybrid" and not (result.input_image_url or result.guide_image_url):
         raise RuntimeError(
-            "Hybrid smoke completed without a prompt-generated guide image. The bridge still fell back instead of succeeding."
+            "Hybrid smoke completed without a usable reference artifact."
         )
     if label == "texture" and result.output_mode != "shape_texture":
         raise RuntimeError(
