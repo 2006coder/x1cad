@@ -1,4 +1,5 @@
 import {
+  useCallback,
   Component,
   Suspense,
   forwardRef,
@@ -11,7 +12,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
 import {
   Bounds,
   ContactShadows,
@@ -35,6 +36,7 @@ import {
   Matrix4,
   MOUSE,
   Mesh,
+  Plane,
   Quaternion,
   Raycaster,
   Vector2,
@@ -90,9 +92,13 @@ const workplaneNormal = new Vector3()
 const workplaneXAxis = new Vector3()
 const workplaneZAxis = new Vector3()
 const workplaneBasis = new Matrix4()
+const workplanePlane = new Plane()
 const helperQuaternion = new Quaternion()
 const fallbackXAxis = new Vector3(1, 0, 0)
 const fallbackZAxis = new Vector3(0, 0, 1)
+const objectDragHit = new Vector3()
+const objectDragAnchor = new Vector3()
+const objectDragPosition = new Vector3()
 const workspacePlaneSize = 160
 const surfacePlaneSize = 48
 const orbitMouseDisabled = -1
@@ -108,6 +114,12 @@ interface SurfacePick {
   xAxis: Vector3Tuple
   label: string
   objectId: string | null
+}
+
+interface ObjectDragState {
+  objectId: string
+  planarOffset: Vector3
+  normalOffset: number
 }
 
 function vectorToTuple(vector: Vector3): Vector3Tuple {
@@ -203,8 +215,9 @@ const PrimitiveNode = forwardRef<
     selected: boolean
     wireframe: boolean
     onSelect: (id: string) => void
+    onPointerDown: (object: SceneObject, event: ThreeEvent<PointerEvent>) => void
   }
->(function PrimitiveNode({ object, selected, wireframe, onSelect }, ref) {
+>(function PrimitiveNode({ object, selected, wireframe, onSelect, onPointerDown }, ref) {
   const materialProps = {
     color: object.color,
     metalness: 0.08,
@@ -226,6 +239,10 @@ const PrimitiveNode = forwardRef<
     castShadow: true,
     receiveShadow: true,
     userData: surfaceUserData,
+    onPointerDown: (event: ThreeEvent<PointerEvent>) => {
+      event.stopPropagation()
+      onPointerDown(object, event)
+    },
     onClick: (event: { stopPropagation: () => void }) => {
       event.stopPropagation()
       onSelect(object.id)
@@ -421,8 +438,9 @@ const GeneratedMeshNode = forwardRef<
     selected: boolean
     wireframe: boolean
     onSelect: (id: string) => void
+    onPointerDown: (object: SceneObject, event: ThreeEvent<PointerEvent>) => void
   }
->(function GeneratedMeshNode({ object, selected, wireframe, onSelect }, ref) {
+>(function GeneratedMeshNode({ object, selected, wireframe, onSelect, onPointerDown }, ref) {
   const assetUrl = `${apiBase}/api/ai/assets/${object.meshAssetId}`
   const gltf = useGLTF(assetUrl)
   const scene = useMemo(() => {
@@ -494,6 +512,10 @@ const GeneratedMeshNode = forwardRef<
       position={object.position}
       rotation={groupRotation}
       scale={object.scale}
+      onPointerDown={(event) => {
+        event.stopPropagation()
+        onPointerDown(object, event)
+      }}
       onClick={(event) => {
         event.stopPropagation()
         onSelect(object.id)
@@ -518,14 +540,16 @@ const SceneObjectNode = forwardRef<
     selected: boolean
     wireframe: boolean
     onSelect: (id: string) => void
+    onPointerDown: (object: SceneObject, event: ThreeEvent<PointerEvent>) => void
   }
->(function SceneObjectNode({ object, selected, wireframe, onSelect }, ref) {
+>(function SceneObjectNode({ object, selected, wireframe, onSelect, onPointerDown }, ref) {
   if (isMeshObject(object)) {
     return (
       <MeshLoadBoundary object={object} onSelect={onSelect} selected={selected} wireframe={wireframe}>
         <GeneratedMeshNode
           ref={ref}
           object={object}
+          onPointerDown={onPointerDown}
           onSelect={onSelect}
           selected={selected}
           wireframe={wireframe}
@@ -538,6 +562,7 @@ const SceneObjectNode = forwardRef<
     <PrimitiveNode
       ref={ref}
       object={object}
+      onPointerDown={onPointerDown}
       onSelect={onSelect}
       selected={selected}
       wireframe={wireframe}
@@ -627,6 +652,7 @@ export function SceneViewport() {
   const sceneRef = useRef<Group | null>(null)
   const selectedRef = useRef<Group | null>(null)
   const viewportBridgeRef = useRef<ViewportBridgeState>({ camera: null, canvas: null })
+  const objectDragRef = useRef<ObjectDragState | null>(null)
   const [workplaneDropActive, setWorkplaneDropActive] = useState(false)
   const [shiftPanEnabled, setShiftPanEnabled] = useState(false)
 
@@ -655,6 +681,16 @@ export function SceneViewport() {
   const activePlaneColor = workplane.mode === 'surface' ? '#facc15' : '#2dd4bf'
   const activeGridColor = workplane.mode === 'surface' ? '#f59e0b' : '#163447'
   const activePlaneOpacity = workplane.mode === 'surface' ? 0.2 : 0.06
+  const workplaneOrigin = useMemo(() => new Vector3(...workplane.origin), [workplane.origin])
+  const workplaneUnitNormal = useMemo(() => {
+    const nextNormal = new Vector3(...workplane.normal)
+    if (nextNormal.lengthSq() < 1e-6) {
+      nextNormal.set(0, 1, 0)
+    } else {
+      nextNormal.normalize()
+    }
+    return nextNormal
+  }, [workplane.normal])
   const workplaneQuaternion = useMemo(() => {
     workplaneNormal.set(...workplane.normal)
     if (workplaneNormal.lengthSq() < 1e-6) {
@@ -703,6 +739,29 @@ export function SceneViewport() {
     return null
   }
 
+  const pointOnActiveWorkplane = useCallback((clientX: number, clientY: number) => {
+    const { camera, canvas } = viewportBridgeRef.current
+    if (!camera || !canvas) {
+      return null
+    }
+
+    const bounds = canvas.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) {
+      return null
+    }
+
+    workplanePointer.x = ((clientX - bounds.left) / bounds.width) * 2 - 1
+    workplanePointer.y = -(((clientY - bounds.top) / bounds.height) * 2 - 1)
+    workplaneRaycaster.setFromCamera(workplanePointer, camera)
+    workplanePlane.setFromNormalAndCoplanarPoint(workplaneUnitNormal, workplaneOrigin)
+
+    if (!workplaneRaycaster.ray.intersectPlane(workplanePlane, objectDragHit)) {
+      return null
+    }
+
+    return objectDragHit.clone()
+  }, [workplaneOrigin, workplaneUnitNormal])
+
   function commitSurfacePick(pick: SurfacePick) {
     setSurfaceWorkplane({
       origin: pick.origin,
@@ -745,6 +804,47 @@ export function SceneViewport() {
     commitSurfacePick(pick)
   }
 
+  function handleObjectPointerDown(object: SceneObject, event: ThreeEvent<PointerEvent>) {
+    if (
+      workplanePlacementActive ||
+      object.locked ||
+      event.button !== 0 ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    ) {
+      return
+    }
+
+    selectObject(object.id)
+    if (selectedObjectId !== object.id || activeTool === 'rotate' || activeTool === 'scale') {
+      return
+    }
+
+    workplanePlane.setFromNormalAndCoplanarPoint(workplaneUnitNormal, workplaneOrigin)
+    if (!event.ray.intersectPlane(workplanePlane, objectDragHit)) {
+      return
+    }
+
+    objectDragPosition.set(...object.position)
+    const normalOffset = objectDragPosition.clone().sub(workplaneOrigin).dot(workplaneUnitNormal)
+    objectDragAnchor
+      .copy(objectDragPosition)
+      .addScaledVector(workplaneUnitNormal, -normalOffset)
+      .sub(objectDragHit)
+
+    objectDragRef.current = {
+      objectId: object.id,
+      planarOffset: objectDragAnchor.clone(),
+      normalOffset,
+    }
+
+    if (orbitRef.current) {
+      orbitRef.current.enabled = false
+    }
+  }
+
   useEffect(() => {
     function handleKeyChange(event: KeyboardEvent) {
       if (event.key !== 'Shift') {
@@ -774,10 +874,50 @@ export function SceneViewport() {
       return
     }
 
-    orbit.mouseButtons.LEFT = (shiftPanEnabled ? MOUSE.PAN : orbitMouseDisabled) as never
+    orbit.mouseButtons.LEFT = (shiftPanEnabled ? MOUSE.ROTATE : orbitMouseDisabled) as never
     orbit.mouseButtons.MIDDLE = MOUSE.DOLLY
     orbit.mouseButtons.RIGHT = MOUSE.ROTATE
   }, [shiftPanEnabled])
+
+  useEffect(() => {
+    function endObjectDrag() {
+      objectDragRef.current = null
+      if (orbitRef.current) {
+        orbitRef.current.enabled = true
+      }
+    }
+
+    function handleWindowPointerMove(event: PointerEvent) {
+      const dragState = objectDragRef.current
+      if (!dragState) {
+        return
+      }
+
+      const planePoint = pointOnActiveWorkplane(event.clientX, event.clientY)
+      if (!planePoint) {
+        return
+      }
+
+      const nextPosition = planePoint
+        .add(dragState.planarOffset)
+        .addScaledVector(workplaneUnitNormal, dragState.normalOffset)
+
+      updateObject(dragState.objectId, {
+        position: vectorToTuple(nextPosition),
+      })
+    }
+
+    window.addEventListener('pointermove', handleWindowPointerMove)
+    window.addEventListener('pointerup', endObjectDrag)
+    window.addEventListener('pointercancel', endObjectDrag)
+    window.addEventListener('blur', endObjectDrag)
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove)
+      window.removeEventListener('pointerup', endObjectDrag)
+      window.removeEventListener('pointercancel', endObjectDrag)
+      window.removeEventListener('blur', endObjectDrag)
+    }
+  }, [pointOnActiveWorkplane, updateObject, workplaneUnitNormal])
 
   return (
     <section
@@ -967,6 +1107,7 @@ export function SceneViewport() {
                       key={object.id}
                       ref={transformRef}
                       mode={transformMode}
+                      size={1.15}
                       space={coordinateSpace}
                       rotationSnap={MathUtils.degToRad(15)}
                       scaleSnap={0.05}
@@ -1001,6 +1142,7 @@ export function SceneViewport() {
                       <SceneObjectNode
                         ref={selectedRef}
                         object={object}
+                        onPointerDown={handleObjectPointerDown}
                         onSelect={selectObject}
                         selected
                         wireframe={viewMode === 'wireframe'}
@@ -1014,6 +1156,7 @@ export function SceneViewport() {
                     key={object.id}
                     ref={isSelected ? selectedRef : undefined}
                     object={object}
+                    onPointerDown={handleObjectPointerDown}
                     onSelect={selectObject}
                     selected={isSelected}
                     wireframe={viewMode === 'wireframe'}
@@ -1059,6 +1202,10 @@ export function SceneViewport() {
               {selectedObjectVisible.position[0].toFixed(1)} / Y{' '}
               {selectedObjectVisible.position[1].toFixed(1)} / Z{' '}
               {selectedObjectVisible.position[2].toFixed(1)}
+            </p>
+            <p>
+              Drag the body to move on the active workplane. Use the translate, rotate, and scale
+              buttons below for direct viewport handles.
             </p>
             <div className="viewport-tool-row">
               {viewportToolActions.map(({ id, label, icon: Icon }) => (
