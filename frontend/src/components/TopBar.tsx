@@ -1,8 +1,9 @@
-import { startTransition } from 'react'
+import { startTransition, useState } from 'react'
 import {
   Boxes,
   Copy,
   Focus,
+  Grid3X3,
   Layers3,
   Move3D,
   MousePointer2,
@@ -32,12 +33,18 @@ const toolOptions: { id: ActiveTool; label: string; hotkey: string; icon: typeof
 export function TopBar({ systemStatus, backendOnline }: TopBarProps) {
   const activeTool = useCadStore((state) => state.activeTool)
   const selectedObjectId = useCadStore((state) => state.selectedObjectId)
+  const workplane = useCadStore((state) => state.workplane)
+  const workplanePlacementActive = useCadStore((state) => state.workplanePlacementActive)
   const setActiveTool = useCadStore((state) => state.setActiveTool)
   const duplicateSelected = useCadStore((state) => state.duplicateSelected)
   const deleteSelected = useCadStore((state) => state.deleteSelected)
   const loadDemoScene = useCadStore((state) => state.loadDemoScene)
   const openOnboarding = useCadStore((state) => state.openOnboarding)
   const requestCamera = useCadStore((state) => state.requestCamera)
+  const armWorkplanePlacement = useCadStore((state) => state.armWorkplanePlacement)
+  const cancelWorkplanePlacement = useCadStore((state) => state.cancelWorkplanePlacement)
+  const resetWorkplane = useCadStore((state) => state.resetWorkplane)
+  const [workspaceDropActive, setWorkspaceDropActive] = useState(false)
 
   const aiModeLabel =
     systemStatus.ai_capability.mode === 'FULL'
@@ -45,6 +52,8 @@ export function TopBar({ systemStatus, backendOnline }: TopBarProps) {
       : systemStatus.ai_capability.mode === 'SHAPE_ONLY'
         ? 'AI Shape'
         : 'AI Off'
+  const workplaneLabel =
+    workplane.mode === 'surface' ? workplane.label || 'Surface workplane' : 'Workspace plane'
 
   return (
     <header className="topbar panel">
@@ -78,6 +87,69 @@ export function TopBar({ systemStatus, backendOnline }: TopBarProps) {
         </div>
 
         <div className="toolbar-group toolbar-group--compact">
+          <button
+            className={`secondary-button ${
+              workplanePlacementActive || workplane.mode === 'surface' ? 'is-active' : ''
+            }`}
+            draggable
+            onClick={() =>
+              workplanePlacementActive ? cancelWorkplanePlacement() : armWorkplanePlacement()
+            }
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData('application/x-x1cad-workplane', 'workplane')
+            }}
+            type="button"
+          >
+            <Grid3X3 size={16} />
+            <span>{workplanePlacementActive ? 'Pick Surface' : 'Workplane'}</span>
+          </button>
+          <button
+            className={`secondary-button ${
+              workplane.mode === 'workspace' ? 'is-active' : ''
+            } ${workspaceDropActive ? 'is-drop-target' : ''}`}
+            onClick={() => resetWorkplane()}
+            onDragEnter={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes('application/x-x1cad-workplane')) {
+                return
+              }
+
+              event.preventDefault()
+              setWorkspaceDropActive(true)
+            }}
+            onDragLeave={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes('application/x-x1cad-workplane')) {
+                return
+              }
+
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setWorkspaceDropActive(false)
+              }
+            }}
+            onDragOver={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes('application/x-x1cad-workplane')) {
+                return
+              }
+
+              event.preventDefault()
+              if (!workspaceDropActive) {
+                setWorkspaceDropActive(true)
+              }
+            }}
+            onDrop={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes('application/x-x1cad-workplane')) {
+                return
+              }
+
+              event.preventDefault()
+              setWorkspaceDropActive(false)
+              resetWorkplane()
+            }}
+            type="button"
+          >
+            <Layers3 size={16} />
+            <span>Workspace</span>
+          </button>
           <button className="secondary-button" onClick={() => requestCamera('focusScene')} type="button">
             <Focus size={16} />
             <span>Frame Scene</span>
@@ -116,6 +188,10 @@ export function TopBar({ systemStatus, backendOnline }: TopBarProps) {
           <WandSparkles size={14} />
           <span>Guide</span>
         </button>
+        <div className="status-pill">
+          <Grid3X3 size={14} />
+          <span>{workplanePlacementActive ? 'Pick surface' : workplaneLabel}</span>
+        </div>
         <div className="status-pill">
           <WandSparkles size={14} />
           <span>{aiModeLabel}</span>

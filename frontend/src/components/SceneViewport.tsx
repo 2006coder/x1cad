@@ -1,5 +1,16 @@
-import { Suspense, forwardRef, useEffect, useMemo, useRef } from 'react'
-import { Canvas } from '@react-three/fiber'
+import {
+  Suspense,
+  forwardRef,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from 'react'
+import { Canvas, useThree } from '@react-three/fiber'
 import {
   Bounds,
   ContactShadows,
@@ -13,7 +24,22 @@ import {
   useGLTF,
 } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl, TransformControls as TransformControlsImpl } from 'three-stdlib'
-import { Box3, Color, Group, MathUtils, Mesh, Vector3 } from 'three'
+import {
+  Box3,
+  Color,
+  Group,
+  MathUtils,
+  Matrix3,
+  Matrix4,
+  Mesh,
+  Quaternion,
+  Raycaster,
+  Vector2,
+  Vector3,
+  type Camera,
+  type Intersection,
+  type Object3D,
+} from 'three'
 import { Crosshair, Focus, Grid3X3, Move3D, RotateCw, Scale3D } from 'lucide-react'
 
 import { estimateSceneObjectTriangles } from '../data/primitives'
@@ -24,9 +50,11 @@ import {
   type CameraCommand,
   type PrimitiveParams,
   type SceneObject,
+  type Vector3Tuple,
 } from '../types/cad'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
+const workplaneDragMime = 'application/x-x1cad-workplane'
 
 const degreesToRadians = (value: number) => (value * Math.PI) / 180
 const radiansToDegrees = (value: number) => (value * 180) / Math.PI
@@ -50,6 +78,35 @@ const viewportToolActions: {
 
 const transformBounds = new Box3()
 const transformCenter = new Vector3()
+const workplaneRaycaster = new Raycaster()
+const workplanePointer = new Vector2()
+const faceNormalMatrix = new Matrix3()
+const faceNormal = new Vector3()
+const faceXAxis = new Vector3()
+const workplaneNormal = new Vector3()
+const workplaneXAxis = new Vector3()
+const workplaneZAxis = new Vector3()
+const workplaneBasis = new Matrix4()
+const helperQuaternion = new Quaternion()
+const fallbackXAxis = new Vector3(1, 0, 0)
+const fallbackZAxis = new Vector3(0, 0, 1)
+
+interface ViewportBridgeState {
+  camera: Camera | null
+  canvas: HTMLCanvasElement | null
+}
+
+interface SurfacePick {
+  origin: Vector3Tuple
+  normal: Vector3Tuple
+  xAxis: Vector3Tuple
+  label: string
+  objectId: string | null
+}
+
+function vectorToTuple(vector: Vector3): Vector3Tuple {
+  return [vector.x, vector.y, vector.z]
+}
 
 function getTargetCenter(target: Group | null) {
   if (!target) {
@@ -62,6 +119,75 @@ function getTargetCenter(target: Group | null) {
   }
 
   return transformBounds.getCenter(transformCenter.clone())
+}
+
+function isWorkplaneDrag(event: DragEvent<HTMLElement>) {
+  return Array.from(event.dataTransfer.types).includes(workplaneDragMime)
+}
+
+function cadSurfaceSource(node: Object3D | null) {
+  let current: Object3D | null = node
+  while (current) {
+    if (current.userData?.cadSurface) {
+      return current
+    }
+    current = current.parent
+  }
+  return null
+}
+
+function buildSurfacePick(intersection: Intersection<Object3D>) {
+  const source = cadSurfaceSource(intersection.object)
+  if (!(source instanceof Mesh) || !intersection.face) {
+    return null
+  }
+
+  faceNormalMatrix.getNormalMatrix(source.matrixWorld)
+  faceNormal.copy(intersection.face.normal).applyNormalMatrix(faceNormalMatrix).normalize()
+
+  faceXAxis.set(1, 0, 0).applyQuaternion(source.getWorldQuaternion(helperQuaternion))
+  faceXAxis.addScaledVector(faceNormal, -faceXAxis.dot(faceNormal))
+  if (faceXAxis.lengthSq() < 1e-6) {
+    faceXAxis
+      .copy(Math.abs(faceNormal.dot(fallbackXAxis)) < 0.96 ? fallbackXAxis : fallbackZAxis)
+      .addScaledVector(faceNormal, -faceXAxis.dot(faceNormal))
+  }
+  faceXAxis.normalize()
+
+  return {
+    origin: vectorToTuple(intersection.point.clone()),
+    normal: vectorToTuple(faceNormal),
+    xAxis: vectorToTuple(faceXAxis),
+    label:
+      typeof source.userData.cadObjectName === 'string'
+        ? `${source.userData.cadObjectName} surface`
+        : 'Surface workplane',
+    objectId: typeof source.userData.cadObjectId === 'string' ? source.userData.cadObjectId : null,
+  } satisfies SurfacePick
+}
+
+function ViewportBridge({
+  bridgeRef,
+}: {
+  bridgeRef: MutableRefObject<ViewportBridgeState>
+}) {
+  const { camera, gl } = useThree()
+
+  useEffect(() => {
+    bridgeRef.current = {
+      camera,
+      canvas: gl.domElement,
+    }
+
+    return () => {
+      bridgeRef.current = {
+        camera: null,
+        canvas: null,
+      }
+    }
+  }, [bridgeRef, camera, gl])
+
+  return null
 }
 
 const PrimitiveNode = forwardRef<
@@ -85,9 +211,15 @@ const PrimitiveNode = forwardRef<
   }
 
   const groupRotation = object.rotation.map(degreesToRadians) as [number, number, number]
+  const surfaceUserData = {
+    cadSurface: true,
+    cadObjectId: object.id,
+    cadObjectName: object.name,
+  }
   const commonProps = {
     castShadow: true,
     receiveShadow: true,
+    userData: surfaceUserData,
     onClick: (event: { stopPropagation: () => void }) => {
       event.stopPropagation()
       onSelect(object.id)
@@ -215,6 +347,12 @@ const GeneratedMeshNode = forwardRef<
       if (child instanceof Mesh) {
         child.castShadow = true
         child.receiveShadow = true
+        child.userData = {
+          ...child.userData,
+          cadSurface: true,
+          cadObjectId: object.id,
+          cadObjectName: object.name,
+        }
         if (Array.isArray(child.material)) {
           child.material = child.material.map((material) => material.clone())
         } else if (child.material) {
@@ -223,12 +361,19 @@ const GeneratedMeshNode = forwardRef<
       }
     })
     return clone
-  }, [gltf.scene])
+  }, [gltf.scene, object.id, object.name])
 
   useEffect(() => {
     scene.traverse((child) => {
       if (!(child instanceof Mesh)) {
         return
+      }
+
+      child.userData = {
+        ...child.userData,
+        cadSurface: true,
+        cadObjectId: object.id,
+        cadObjectName: object.name,
       }
 
       const materials = Array.isArray(child.material) ? child.material : [child.material]
@@ -255,7 +400,7 @@ const GeneratedMeshNode = forwardRef<
         }
       })
     })
-  }, [object.color, scene, selected, wireframe])
+  }, [object.color, object.id, object.name, scene, selected, wireframe])
 
   const groupRotation = object.rotation.map(degreesToRadians) as [number, number, number]
 
@@ -323,9 +468,9 @@ function CameraDirector({
 }: {
   cameraRequestToken: number
   cameraRequestKind: CameraCommand
-  orbitRef: React.RefObject<OrbitControlsImpl | null>
-  sceneRef: React.RefObject<Group | null>
-  selectedRef: React.RefObject<Group | null>
+  orbitRef: RefObject<OrbitControlsImpl | null>
+  sceneRef: RefObject<Group | null>
+  selectedRef: RefObject<Group | null>
 }) {
   const bounds = useBounds()
 
@@ -378,6 +523,8 @@ export function SceneViewport() {
   const coordinateSpace = useCadStore((state) => state.coordinateSpace)
   const snapIncrement = useCadStore((state) => state.snapIncrement)
   const viewMode = useCadStore((state) => state.viewMode)
+  const workplane = useCadStore((state) => state.workplane)
+  const workplanePlacementActive = useCadStore((state) => state.workplanePlacementActive)
   const showOnboarding = useCadStore((state) => state.showOnboarding)
   const dismissOnboarding = useCadStore((state) => state.dismissOnboarding)
   const cameraRequest = useCadStore((state) => state.cameraRequest)
@@ -385,11 +532,16 @@ export function SceneViewport() {
   const setActiveTool = useCadStore((state) => state.setActiveTool)
   const requestCamera = useCadStore((state) => state.requestCamera)
   const updateObject = useCadStore((state) => state.updateObject)
+  const armWorkplanePlacement = useCadStore((state) => state.armWorkplanePlacement)
+  const cancelWorkplanePlacement = useCadStore((state) => state.cancelWorkplanePlacement)
+  const setSurfaceWorkplane = useCadStore((state) => state.setSurfaceWorkplane)
 
   const orbitRef = useRef<OrbitControlsImpl | null>(null)
   const transformRef = useRef<TransformControlsImpl | null>(null)
   const sceneRef = useRef<Group | null>(null)
   const selectedRef = useRef<Group | null>(null)
+  const viewportBridgeRef = useRef<ViewportBridgeState>({ camera: null, canvas: null })
+  const [workplaneDropActive, setWorkplaneDropActive] = useState(false)
 
   const visibleObjects = useMemo(
     () => sceneObjects.filter((object) => !object.hidden),
@@ -405,9 +557,36 @@ export function SceneViewport() {
   )
 
   const transformEnabled =
-    !!selectedObjectVisible && !selectedObjectVisible.locked && activeTool !== 'select'
+    !!selectedObjectVisible &&
+    !selectedObjectVisible.locked &&
+    activeTool !== 'select' &&
+    !workplanePlacementActive
   const transformMode =
     activeTool === 'move' ? 'translate' : activeTool === 'rotate' ? 'rotate' : 'scale'
+  const workplaneLabel =
+    workplane.mode === 'surface' ? workplane.label || 'Surface workplane' : 'Workspace plane'
+  const workplaneQuaternion = useMemo(() => {
+    workplaneNormal.set(...workplane.normal)
+    if (workplaneNormal.lengthSq() < 1e-6) {
+      workplaneNormal.set(0, 1, 0)
+    } else {
+      workplaneNormal.normalize()
+    }
+
+    workplaneXAxis.set(...workplane.xAxis)
+    workplaneXAxis.addScaledVector(workplaneNormal, -workplaneXAxis.dot(workplaneNormal))
+    if (workplaneXAxis.lengthSq() < 1e-6) {
+      workplaneXAxis.copy(
+        Math.abs(workplaneNormal.dot(fallbackXAxis)) < 0.96 ? fallbackXAxis : fallbackZAxis,
+      )
+      workplaneXAxis.addScaledVector(workplaneNormal, -workplaneXAxis.dot(workplaneNormal))
+    }
+    workplaneXAxis.normalize()
+    workplaneZAxis.copy(workplaneXAxis).cross(workplaneNormal).normalize()
+    workplaneXAxis.copy(workplaneNormal).cross(workplaneZAxis).normalize()
+    workplaneBasis.makeBasis(workplaneXAxis, workplaneNormal, workplaneZAxis)
+    return new Quaternion().setFromRotationMatrix(workplaneBasis)
+  }, [workplane])
 
   useEffect(() => {
     if (!selectedObjectVisibleId) {
@@ -417,8 +596,105 @@ export function SceneViewport() {
     requestCamera('focusSelected')
   }, [requestCamera, selectedObjectVisibleId])
 
+  function pickSurfaceAtClientPoint(clientX: number, clientY: number) {
+    const { camera, canvas } = viewportBridgeRef.current
+    if (!camera || !canvas || !sceneRef.current) {
+      return null
+    }
+
+    const bounds = canvas.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) {
+      return null
+    }
+
+    workplanePointer.x = ((clientX - bounds.left) / bounds.width) * 2 - 1
+    workplanePointer.y = -(((clientY - bounds.top) / bounds.height) * 2 - 1)
+    workplaneRaycaster.setFromCamera(workplanePointer, camera)
+
+    for (const intersection of workplaneRaycaster.intersectObjects(sceneRef.current.children, true)) {
+      const pick = buildSurfacePick(intersection)
+      if (pick) {
+        return pick
+      }
+    }
+
+    return null
+  }
+
+  function commitSurfacePick(pick: SurfacePick) {
+    setSurfaceWorkplane({
+      origin: pick.origin,
+      normal: pick.normal,
+      xAxis: pick.xAxis,
+      label: pick.label,
+    })
+    if (pick.objectId) {
+      selectObject(pick.objectId)
+    }
+  }
+
+  function handleViewportDrop(event: DragEvent<HTMLElement>) {
+    if (!isWorkplaneDrag(event)) {
+      return
+    }
+
+    event.preventDefault()
+    setWorkplaneDropActive(false)
+    const pick = pickSurfaceAtClientPoint(event.clientX, event.clientY)
+    if (pick) {
+      commitSurfacePick(pick)
+      return
+    }
+
+    armWorkplanePlacement()
+  }
+
+  function handleViewportPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!workplanePlacementActive) {
+      return
+    }
+
+    const pick = pickSurfaceAtClientPoint(event.clientX, event.clientY)
+    if (!pick) {
+      return
+    }
+
+    event.preventDefault()
+    commitSurfacePick(pick)
+  }
+
   return (
-    <section className="viewport-panel panel">
+    <section
+      className="viewport-panel panel"
+      onDragEnter={(event) => {
+        if (!isWorkplaneDrag(event)) {
+          return
+        }
+
+        event.preventDefault()
+        setWorkplaneDropActive(true)
+      }}
+      onDragLeave={(event) => {
+        if (!isWorkplaneDrag(event)) {
+          return
+        }
+
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setWorkplaneDropActive(false)
+        }
+      }}
+      onDragOver={(event) => {
+        if (!isWorkplaneDrag(event)) {
+          return
+        }
+
+        event.preventDefault()
+        if (!workplaneDropActive) {
+          setWorkplaneDropActive(true)
+        }
+      }}
+      onDrop={handleViewportDrop}
+    >
       <div className="viewport-overlay viewport-overlay--top">
         <div className="metric-chip">
           <span>Objects</span>
@@ -431,6 +707,10 @@ export function SceneViewport() {
         <div className="metric-chip">
           <span>Editing</span>
           <strong>{selectedObjectVisible?.locked ? 'Locked' : activeTool}</strong>
+        </div>
+        <div className="metric-chip">
+          <span>Workplane</span>
+          <strong>{workplanePlacementActive ? 'Pick surface' : workplaneLabel}</strong>
         </div>
       </div>
 
@@ -446,10 +726,18 @@ export function SceneViewport() {
               {button.label}
             </button>
           ))}
-          <button className="nav-button nav-button--icon" onClick={() => requestCamera('focusSelected')} type="button">
+          <button
+            className="nav-button nav-button--icon"
+            onClick={() => requestCamera('focusSelected')}
+            type="button"
+          >
             <Focus size={15} />
           </button>
-          <button className="nav-button nav-button--icon" onClick={() => requestCamera('focusScene')} type="button">
+          <button
+            className="nav-button nav-button--icon"
+            onClick={() => requestCamera('focusScene')}
+            type="button"
+          >
             <Crosshair size={15} />
           </button>
         </div>
@@ -472,13 +760,44 @@ export function SceneViewport() {
         </div>
       )}
 
+      {(workplanePlacementActive || workplaneDropActive) && (
+        <div className="viewport-overlay viewport-overlay--workplane">
+          <div className={`workplane-banner ${workplaneDropActive ? 'is-drop-target' : ''}`}>
+            <span className="guide-eyebrow">Surface workplane</span>
+            <strong>
+              {workplaneDropActive
+                ? 'Drop the workplane on any visible face to continue modeling there.'
+                : 'Click a visible face to place the workplane.'}
+            </strong>
+            <p>
+              New inserts land on the active surface until you reset back to the workspace plane.
+            </p>
+            {!workplaneDropActive ? (
+              <button
+                className="secondary-button"
+                onClick={() => cancelWorkplanePlacement()}
+                type="button"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       <Canvas
         camera={{ fov: 42, position: [68, 42, 68] }}
         className="viewport-canvas"
         gl={{ antialias: true, preserveDrawingBuffer: true }}
-        onPointerMissed={() => selectObject(null)}
+        onPointerDown={handleViewportPointerDown}
+        onPointerMissed={() => {
+          if (!workplanePlacementActive) {
+            selectObject(null)
+          }
+        }}
         shadows
       >
+        <ViewportBridge bridgeRef={viewportBridgeRef} />
         <color attach="background" args={['#07131c']} />
         <fog attach="fog" args={['#07131c', 120, 220]} />
         <ambientLight intensity={0.9} />
@@ -493,6 +812,19 @@ export function SceneViewport() {
         <Environment preset="city" environmentIntensity={0.24} />
         <gridHelper args={[240, 48, '#2dd4bf', '#163447']} position={[0, 0, 0]} />
         <axesHelper args={[24]} />
+
+        {workplane.mode === 'surface' ? (
+          <group position={workplane.origin} quaternion={workplaneQuaternion}>
+            <gridHelper args={[72, 12, '#facc15', '#f59e0b']} />
+            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
+              <circleGeometry args={[28, 48]} />
+              <meshBasicMaterial color="#facc15" depthWrite={false} opacity={0.08} transparent />
+            </mesh>
+            <Html position={[0, 4, 0]} center distanceFactor={10}>
+              <div className="selection-tag selection-tag--workplane">{workplaneLabel}</div>
+            </Html>
+          </group>
+        ) : null}
 
         <Bounds margin={1.15}>
           <group ref={sceneRef}>
@@ -563,7 +895,13 @@ export function SceneViewport() {
           </group>
         </Bounds>
 
-        <ContactShadows blur={2.6} color="#081923" opacity={0.45} position={[0, 0, 0]} scale={180} />
+        <ContactShadows
+          blur={2.6}
+          color="#081923"
+          opacity={0.45}
+          position={[0, 0, 0]}
+          scale={180}
+        />
         <OrbitControls
           ref={orbitRef}
           enableDamping
@@ -589,15 +927,17 @@ export function SceneViewport() {
             </span>
             <strong>{selectedObjectVisible.name}</strong>
             <p>
-              {selectedObjectVisible.kind === 'mesh' ? 'mesh' : selectedObjectVisible.type} at X {selectedObjectVisible.position[0].toFixed(1)} / Y{' '}
-              {selectedObjectVisible.position[1].toFixed(1)} / Z {selectedObjectVisible.position[2].toFixed(1)}
+              {selectedObjectVisible.kind === 'mesh' ? 'mesh' : selectedObjectVisible.type} at X{' '}
+              {selectedObjectVisible.position[0].toFixed(1)} / Y{' '}
+              {selectedObjectVisible.position[1].toFixed(1)} / Z{' '}
+              {selectedObjectVisible.position[2].toFixed(1)}
             </p>
             <div className="viewport-tool-row">
               {viewportToolActions.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   className={`mini-tool-button ${activeTool === id ? 'is-active' : ''}`}
-                  disabled={selectedObjectVisible.locked}
+                  disabled={selectedObjectVisible.locked || workplanePlacementActive}
                   onClick={() => setActiveTool(id)}
                   type="button"
                 >

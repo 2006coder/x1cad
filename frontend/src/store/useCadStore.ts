@@ -16,7 +16,9 @@ import type {
   SceneObject,
   Vector3Tuple,
   ViewMode,
+  WorkplaneState,
 } from '../types/cad'
+import { WORKSPACE_WORKPLANE } from '../types/cad'
 import type { GenerationResult } from '../types/system'
 
 interface CameraRequest {
@@ -31,6 +33,8 @@ interface CadState {
   coordinateSpace: CoordinateSpace
   snapIncrement: number
   viewMode: ViewMode
+  workplane: WorkplaneState
+  workplanePlacementActive: boolean
   showOnboarding: boolean
   cameraRequest: CameraRequest
   addPrimitive: (type: PrimitiveType) => void
@@ -57,6 +61,10 @@ interface CadState {
   loadDemoScene: () => void
   dismissOnboarding: () => void
   openOnboarding: () => void
+  armWorkplanePlacement: () => void
+  cancelWorkplanePlacement: () => void
+  setSurfaceWorkplane: (workplane: Omit<WorkplaneState, 'mode'>) => void
+  resetWorkplane: () => void
   requestCamera: (kind: CameraCommand) => void
   nudgeSelected: (axis: 0 | 1 | 2, delta: number) => void
 }
@@ -76,11 +84,13 @@ export const useCadStore = create<CadState>()(
       coordinateSpace: 'world',
       snapIncrement: 1,
       viewMode: 'shaded',
+      workplane: WORKSPACE_WORKPLANE,
+      workplanePlacementActive: false,
       showOnboarding: true,
       cameraRequest: { kind: 'focusScene', token: 0 },
       addPrimitive: (type) =>
         set((state) => {
-          const nextObject = createSceneObject(type, state.sceneObjects.length)
+          const nextObject = createSceneObject(type, state.sceneObjects.length, state.workplane)
           return {
             sceneObjects: [...state.sceneObjects, nextObject],
             selectedObjectId: nextObject.id,
@@ -88,7 +98,11 @@ export const useCadStore = create<CadState>()(
         }),
       addGeneratedObject: (result) =>
         set((state) => {
-          const nextObject = createSceneObjectFromAiResult(result, state.sceneObjects.length)
+          const nextObject = createSceneObjectFromAiResult(
+            result,
+            state.sceneObjects.length,
+            state.workplane,
+          )
           return {
             sceneObjects: [...state.sceneObjects, nextObject],
             selectedObjectId: nextObject.id,
@@ -100,7 +114,11 @@ export const useCadStore = create<CadState>()(
         }),
       addGeneratedProxyObject: (result) =>
         set((state) => {
-          const nextObject = createSceneObjectFromAiSuggestion(result, state.sceneObjects.length)
+          const nextObject = createSceneObjectFromAiSuggestion(
+            result,
+            state.sceneObjects.length,
+            state.workplane,
+          )
           return {
             sceneObjects: [...state.sceneObjects, nextObject],
             selectedObjectId: nextObject.id,
@@ -207,11 +225,28 @@ export const useCadStore = create<CadState>()(
         set({
           sceneObjects: nextScene,
           selectedObjectId: nextScene[0]?.id ?? null,
+          workplane: WORKSPACE_WORKPLANE,
+          workplanePlacementActive: false,
           showOnboarding: true,
         })
       },
       dismissOnboarding: () => set({ showOnboarding: false }),
       openOnboarding: () => set({ showOnboarding: true }),
+      armWorkplanePlacement: () => set({ workplanePlacementActive: true }),
+      cancelWorkplanePlacement: () => set({ workplanePlacementActive: false }),
+      setSurfaceWorkplane: (workplane) =>
+        set({
+          workplane: {
+            ...workplane,
+            mode: 'surface',
+          },
+          workplanePlacementActive: false,
+        }),
+      resetWorkplane: () =>
+        set({
+          workplane: WORKSPACE_WORKPLANE,
+          workplanePlacementActive: false,
+        }),
       requestCamera: (kind) =>
         set((state) => ({
           cameraRequest: {
@@ -247,9 +282,10 @@ export const useCadStore = create<CadState>()(
         coordinateSpace: state.coordinateSpace,
         snapIncrement: state.snapIncrement,
         viewMode: state.viewMode,
+        workplane: state.workplane,
         showOnboarding: state.showOnboarding,
       }),
-      version: 3,
+      version: 4,
       migrate: (persistedState) => {
         const state = persistedState as Partial<CadState>
         return {
@@ -266,6 +302,8 @@ export const useCadStore = create<CadState>()(
           coordinateSpace: state.coordinateSpace ?? 'world',
           snapIncrement: state.snapIncrement ?? 1,
           viewMode: state.viewMode ?? 'shaded',
+          workplane: state.workplane ?? WORKSPACE_WORKPLANE,
+          workplanePlacementActive: false,
           showOnboarding: state.showOnboarding ?? true,
           cameraRequest: { kind: 'focusScene', token: 0 },
         } as CadState

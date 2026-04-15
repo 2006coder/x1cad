@@ -288,6 +288,13 @@ button {
   border: 1px solid var(--border);
 }
 
+.secondary-button.is-active,
+.secondary-button.is-drop-target {
+  color: #f4fbff;
+  border-color: var(--border-strong);
+  background: rgba(45, 212, 191, 0.12);
+}
+
 .secondary-button.danger {
   color: #fecaca;
 }
@@ -917,6 +924,34 @@ button:disabled {
   right: 20px;
 }
 
+.viewport-overlay--workplane {
+  top: 132px;
+  display: grid;
+  place-items: center;
+}
+
+.workplane-banner {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(250, 204, 21, 0.38);
+  background: rgba(28, 20, 6, 0.88);
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.24);
+}
+
+.workplane-banner.is-drop-target {
+  border-color: rgba(45, 212, 191, 0.42);
+  background: rgba(7, 30, 28, 0.9);
+}
+
+.workplane-banner p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
 .hud-card {
   max-width: 250px;
   padding: 14px 16px;
@@ -976,6 +1011,11 @@ button:disabled {
 .selection-tag--ai {
   border-color: rgba(192, 132, 252, 0.36);
   color: #ede9fe;
+}
+
+.selection-tag--workplane {
+  border-color: rgba(250, 204, 21, 0.42);
+  color: #fef3c7;
 }
 
 .selection-chip-row {

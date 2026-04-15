@@ -12,7 +12,7 @@ const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const initialRequest: GenerationRequest = {
   prompt: 'Compact desktop enclosure with rounded edges and mounting tabs',
-  mode: 'image',
+  mode: 'text',
   generate_texture: false,
   resolution: 384,
   reference_image: null,
@@ -100,7 +100,7 @@ export function useAiGeneration(systemStatus: SystemStatus, modelStatus: ModelSt
         eta_seconds: null,
         vram_gb_used: null,
         ram_gb_used: null,
-        message: 'Job accepted by the local backend.',
+        message: 'Job accepted. x1cad is preparing the local pipeline.',
         result: null,
         error: null,
       })

@@ -11,6 +11,8 @@ export function StatusBar({ systemStatus, backendOnline }: StatusBarProps) {
   const sceneObjects = useCadStore((state) => state.sceneObjects)
   const activeTool = useCadStore((state) => state.activeTool)
   const snapIncrement = useCadStore((state) => state.snapIncrement)
+  const workplane = useCadStore((state) => state.workplane)
+  const workplanePlacementActive = useCadStore((state) => state.workplanePlacementActive)
   const selectedObject = useSelectedObject()
 
   const estimatedTriangles = sceneObjects
@@ -26,6 +28,16 @@ export function StatusBar({ systemStatus, backendOnline }: StatusBarProps) {
       <div className="statusbar__group">
         <span className="statusbar__label">Snap</span>
         <strong>{snapIncrement} mm</strong>
+      </div>
+      <div className="statusbar__group">
+        <span className="statusbar__label">Workplane</span>
+        <strong>
+          {workplanePlacementActive
+            ? 'Picking surface'
+            : workplane.mode === 'surface'
+              ? workplane.label || 'Surface workplane'
+              : 'Workspace plane'}
+        </strong>
       </div>
       <div className="statusbar__group">
         <span className="statusbar__label">Selection</span>

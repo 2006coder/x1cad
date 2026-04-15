@@ -25,6 +25,8 @@ export function useCadHotkeys() {
   const nudgeSelected = useCadStore((state) => state.nudgeSelected)
   const selectObject = useCadStore((state) => state.selectObject)
   const requestCamera = useCadStore((state) => state.requestCamera)
+  const workplanePlacementActive = useCadStore((state) => state.workplanePlacementActive)
+  const cancelWorkplanePlacement = useCadStore((state) => state.cancelWorkplanePlacement)
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (isEditableTarget(event.target)) {
@@ -112,6 +114,11 @@ export function useCadHotkeys() {
     }
 
     if (key === 'escape') {
+      if (workplanePlacementActive) {
+        cancelWorkplanePlacement()
+        return
+      }
+
       selectObject(null)
       setActiveTool('select')
     }

@@ -148,6 +148,14 @@ function resultPreviewLabel(result: GenerationResult) {
   return 'Reference image'
 }
 
+function formatJobMetric(value: number | null | undefined, suffix: string, fallback: string) {
+  if (value === null || value === undefined) {
+    return fallback
+  }
+
+  return `${value}${suffix}`
+}
+
 export function InspectorPanel({
   selectedObject,
   systemStatus,
@@ -864,9 +872,15 @@ export function InspectorPanel({
               <p>{aiGeneration.jobStatus.message}</p>
               <div className="job-card__metrics">
                 <span>Elapsed {aiGeneration.jobStatus.elapsed_seconds}s</span>
-                <span>ETA {aiGeneration.jobStatus.eta_seconds ?? 0}s</span>
-                <span>VRAM {aiGeneration.jobStatus.vram_gb_used ?? 0} GB</span>
-                <span>RAM {aiGeneration.jobStatus.ram_gb_used ?? 0} GB</span>
+                <span>
+                  ETA {formatJobMetric(aiGeneration.jobStatus.eta_seconds, 's', 'tracking')}
+                </span>
+                <span>
+                  VRAM {formatJobMetric(aiGeneration.jobStatus.vram_gb_used, ' GB', 'sampling')}
+                </span>
+                <span>
+                  RAM {formatJobMetric(aiGeneration.jobStatus.ram_gb_used, ' GB', 'sampling')}
+                </span>
               </div>
               {currentResult ? (
                 <div className="result-summary result-summary--stacked">

@@ -16,7 +16,7 @@ from urllib.request import urlretrieve
 import numpy as np
 import psutil
 import trimesh
-from PIL import Image
+from PIL import Image, ImageOps
 
 from hunyuan_repo_patches import apply_hunyuan_runtime_patches
 
@@ -189,6 +189,14 @@ def fit_image_to_square(image: Image.Image, size: int) -> Image.Image:
     offset = ((size - contained.width) // 2, (size - contained.height) // 2)
     canvas.paste(contained, offset, contained if contained.mode == "RGBA" else None)
     return canvas
+
+
+def stabilized_shape_reference(image: Image.Image, size: int) -> Image.Image:
+    squared = fit_image_to_square(image.convert("RGBA"), size)
+    white_backdrop = Image.new("RGBA", squared.size, (255, 255, 255, 255))
+    white_backdrop.alpha_composite(squared)
+    contrasted = ImageOps.autocontrast(white_backdrop.convert("RGB"), cutoff=1)
+    return contrasted.convert("RGBA")
 
 
 def guide_image_metrics(image: Image.Image) -> dict[str, float]:
@@ -532,6 +540,41 @@ def extract_mesh_from_grid_logits(
     )
 
 
+def build_shape_attempts(image: Image.Image, mode: str, requested_resolution: int) -> list[dict[str, Any]]:
+    seeds = [42, 7, 1234, 2024]
+    attempts: list[dict[str, Any]] = [
+        {
+            "image": image.copy(),
+            "seed": seed,
+            "label": f"Retrying with diffusion seed {seed}",
+            "warning": None,
+        }
+        for seed in seeds
+    ]
+
+    needs_stabilized_variant = mode != "text" or guide_image_needs_repair(image.convert("RGB"))
+    if needs_stabilized_variant:
+        stabilized = stabilized_shape_reference(
+            image,
+            min(square_resolution(requested_resolution), 384),
+        )
+        for seed in (42, 2024):
+            attempts.append(
+                {
+                    "image": stabilized.copy(),
+                    "seed": seed,
+                    "label": (
+                        f"Retrying with a centered clean-background guide image and diffusion seed {seed}"
+                    ),
+                    "warning": (
+                        "x1cad retried shape extraction with a centered clean-background guide image to keep the surface solver stable."
+                    ),
+                }
+            )
+
+    return attempts
+
+
 def generate_shape_mesh(
     *,
     shape_pipeline,
@@ -544,7 +587,6 @@ def generate_shape_mesh(
 ):
     import torch
 
-    shape_seeds = [42, 7, 1234]
     box_v = 1.01
     octree_resolution, num_chunks = effective_shape_settings(torch, requested_resolution)
     base_message = (
@@ -554,14 +596,14 @@ def generate_shape_mesh(
     )
     progress_value = 62 if mode in {"text", "hybrid"} else 42
 
-    total_attempts = len(shape_seeds)
-    attempt_index = 0
+    shape_attempts = build_shape_attempts(image, mode, requested_resolution)
+    total_attempts = len(shape_attempts)
+    last_error: Exception | None = None
 
-    for seed in shape_seeds:
-        attempt_index += 1
+    for attempt_index, attempt in enumerate(shape_attempts, start=1):
         message = base_message
         if attempt_index > 1:
-            message = f"{base_message} Retrying with diffusion seed {seed} ({attempt_index}/{total_attempts})."
+            message = f"{base_message} {attempt['label']} ({attempt_index}/{total_attempts})."
 
         progress(
             status_path=status_path,
@@ -578,8 +620,8 @@ def generate_shape_mesh(
         grid_logits = None
         try:
             latents = shape_pipeline(
-                image=image,
-                generator=build_seeded_generator(torch, seed),
+                image=attempt["image"],
+                generator=build_seeded_generator(torch, attempt["seed"]),
                 output_type="latent",
                 octree_resolution=octree_resolution,
                 num_chunks=num_chunks,
@@ -608,7 +650,8 @@ def generate_shape_mesh(
                 octree_resolution=octree_resolution,
                 bounds=box_v,
             )
-        except Exception:
+        except Exception as exc:
+            last_error = exc
             cleanup_cuda()
             continue
         finally:
@@ -620,14 +663,19 @@ def generate_shape_mesh(
                 del grid_logits
             cleanup_cuda()
 
+        warning = attempt["warning"]
         if finite_ratio < 0.995:
-            return mesh, used_mc_level, (
-                "Recovered a usable mesh from a partially non-finite Hunyuan field by sanitizing the decoded volume."
+            warning = merge_warnings(
+                warning,
+                (
+                    "Recovered a usable mesh from a partially non-finite Hunyuan field by sanitizing the decoded volume."
+                ),
             )
-        return mesh, used_mc_level, None
+        return mesh, used_mc_level, warning
 
     raise RuntimeError(
-        "Hunyuan3D could not produce a stable finite surface volume from the current guide image after multiple seed retries."
+        "Hunyuan3D could not produce a stable finite surface volume from the current guide image after multiple low-memory retries."
+        + (f" Last error: {last_error}" if last_error else "")
     )
 
 

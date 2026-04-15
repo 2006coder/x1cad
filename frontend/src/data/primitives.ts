@@ -1,11 +1,15 @@
 import type { GenerationResult } from '../types/system'
+import { Euler, MathUtils, Matrix4, Quaternion, Vector3 } from 'three'
 import {
+  WORKSPACE_WORKPLANE,
   isMeshObject,
   isPrimitiveObject,
   type PrimitiveDefinition,
   type PrimitiveParams,
   type PrimitiveType,
   type SceneObject,
+  type Vector3Tuple,
+  type WorkplaneState,
 } from '../types/cad'
 
 export const primitiveCatalog: PrimitiveDefinition[] = [
@@ -158,6 +162,13 @@ export const primitiveMap = new Map(
 const clampPositive = (value: number, fallback: number) =>
   Number.isFinite(value) && value > 0 ? value : fallback
 
+const worldUp = new Vector3(0, 1, 0)
+const worldXAxis = new Vector3(1, 0, 0)
+const worldZAxis = new Vector3(0, 0, 1)
+const basisMatrix = new Matrix4()
+const basisQuaternion = new Quaternion()
+const basisEuler = new Euler()
+
 export const getPrimitiveDefinition = (type: PrimitiveType) => primitiveMap.get(type)
 
 export function estimateTriangleCount(type: PrimitiveType, params: PrimitiveParams): number {
@@ -225,16 +236,100 @@ function groundOffset(type: PrimitiveType, params: PrimitiveParams) {
   }
 }
 
-export function createSceneObject(type: PrimitiveType, existingCount: number): SceneObject {
+function tupleToVector(tuple: Vector3Tuple) {
+  return new Vector3(tuple[0], tuple[1], tuple[2])
+}
+
+function vectorToTuple(vector: Vector3): Vector3Tuple {
+  return [vector.x, vector.y, vector.z]
+}
+
+function resolveWorkplaneBasis(workplane?: WorkplaneState | null) {
+  const activeWorkplane = workplane ?? WORKSPACE_WORKPLANE
+  const origin = tupleToVector(activeWorkplane.origin)
+  const normal = tupleToVector(activeWorkplane.normal)
+  if (normal.lengthSq() < 1e-6) {
+    normal.copy(worldUp)
+  } else {
+    normal.normalize()
+  }
+
+  let xAxis = tupleToVector(activeWorkplane.xAxis)
+  xAxis.addScaledVector(normal, -xAxis.dot(normal))
+  if (xAxis.lengthSq() < 1e-6) {
+    xAxis = Math.abs(normal.dot(worldXAxis)) < 0.96 ? worldXAxis.clone() : worldZAxis.clone()
+    xAxis.addScaledVector(normal, -xAxis.dot(normal))
+  }
+  xAxis.normalize()
+
+  let zAxis = xAxis.clone().cross(normal)
+  if (zAxis.lengthSq() < 1e-6) {
+    zAxis = normal.clone().cross(worldZAxis)
+  }
+  zAxis.normalize()
+
+  xAxis = normal.clone().cross(zAxis).normalize()
+  return {
+    origin,
+    normal,
+    xAxis,
+    zAxis,
+    workplane: {
+      ...activeWorkplane,
+      origin: vectorToTuple(origin),
+      normal: vectorToTuple(normal),
+      xAxis: vectorToTuple(xAxis),
+    },
+  }
+}
+
+function placementGrid(existingCount: number, rowOffset: number) {
+  const column = existingCount % 3
+  const row = Math.floor(existingCount / 3)
+  return {
+    x: column * 34 - 34,
+    z: row * 32 + rowOffset,
+  }
+}
+
+function rotationFromWorkplane(workplane?: WorkplaneState | null): Vector3Tuple {
+  const { normal, xAxis, zAxis } = resolveWorkplaneBasis(workplane)
+  basisMatrix.makeBasis(xAxis, normal, zAxis)
+  basisQuaternion.setFromRotationMatrix(basisMatrix)
+  basisEuler.setFromQuaternion(basisQuaternion, 'XYZ')
+  return [
+    MathUtils.radToDeg(basisEuler.x),
+    MathUtils.radToDeg(basisEuler.y),
+    MathUtils.radToDeg(basisEuler.z),
+  ]
+}
+
+function positionOnWorkplane(
+  existingCount: number,
+  rowOffset: number,
+  normalOffset: number,
+  workplane?: WorkplaneState | null,
+): Vector3Tuple {
+  const { x, z } = placementGrid(existingCount, rowOffset)
+  const { origin, normal, xAxis, zAxis } = resolveWorkplaneBasis(workplane)
+  const position = origin
+    .clone()
+    .addScaledVector(xAxis, x)
+    .addScaledVector(zAxis, z)
+    .addScaledVector(normal, normalOffset)
+  return vectorToTuple(position)
+}
+
+export function createSceneObject(
+  type: PrimitiveType,
+  existingCount: number,
+  workplane?: WorkplaneState | null,
+): SceneObject {
   const definition = primitiveMap.get(type)
   if (!definition) {
     throw new Error(`Unknown primitive type: ${type}`)
   }
 
-  const column = existingCount % 3
-  const row = Math.floor(existingCount / 3)
-  const x = column * 34 - 34
-  const z = row * 32 - 18
   const params = { ...definition.defaults }
 
   return {
@@ -244,8 +339,8 @@ export function createSceneObject(type: PrimitiveType, existingCount: number): S
     name: `${definition.label} ${existingCount + 1}`,
     color: definition.accent,
     params,
-    position: [x, groundOffset(type, params), z],
-    rotation: [0, 0, 0],
+    position: positionOnWorkplane(existingCount, -18, groundOffset(type, params), workplane),
+    rotation: rotationFromWorkplane(workplane),
     scale: [1, 1, 1],
     hidden: false,
     locked: false,
@@ -256,6 +351,7 @@ export function createSceneObject(type: PrimitiveType, existingCount: number): S
 export function createSceneObjectFromAiResult(
   result: GenerationResult,
   existingCount: number,
+  workplane?: WorkplaneState | null,
 ): SceneObject {
   return {
     id: `generatedMesh-${crypto.randomUUID()}`,
@@ -264,8 +360,8 @@ export function createSceneObjectFromAiResult(
     name: result.preview_name,
     color: result.suggested_color,
     params: {},
-    position: [0, 12 + existingCount * 0.2, 0],
-    rotation: [0, 0, 0],
+    position: positionOnWorkplane(existingCount, 6, 12 + existingCount * 0.2, workplane),
+    rotation: rotationFromWorkplane(workplane),
     scale: [1, 1, 1],
     hidden: false,
     locked: false,
@@ -282,6 +378,7 @@ export function createSceneObjectFromAiResult(
 export function createSceneObjectFromAiSuggestion(
   result: GenerationResult,
   existingCount: number,
+  workplane?: WorkplaneState | null,
 ): SceneObject {
   const definition = primitiveMap.get(result.suggested_primitive)
   if (!definition) {
@@ -289,10 +386,6 @@ export function createSceneObjectFromAiSuggestion(
   }
 
   const params = { ...definition.defaults, ...result.suggested_params }
-  const column = existingCount % 3
-  const row = Math.floor(existingCount / 3)
-  const x = column * 34 - 34
-  const z = row * 32 + 22
 
   return {
     id: `${result.suggested_primitive}-${crypto.randomUUID()}`,
@@ -301,8 +394,13 @@ export function createSceneObjectFromAiSuggestion(
     name: `${result.preview_name} Proxy`,
     color: result.suggested_color,
     params,
-    position: [x, groundOffset(result.suggested_primitive, params), z],
-    rotation: [0, 0, 0],
+    position: positionOnWorkplane(
+      existingCount,
+      22,
+      groundOffset(result.suggested_primitive, params),
+      workplane,
+    ),
+    rotation: rotationFromWorkplane(workplane),
     scale: [1, 1, 1],
     hidden: false,
     locked: false,

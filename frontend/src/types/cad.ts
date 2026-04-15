@@ -14,6 +14,7 @@ export type SceneObjectKind = 'primitive' | 'mesh'
 export type ActiveTool = 'select' | 'move' | 'rotate' | 'scale'
 export type CoordinateSpace = 'world' | 'local'
 export type ViewMode = 'shaded' | 'wireframe'
+export type WorkplaneMode = 'workspace' | 'surface'
 export type CameraCommand =
   | 'focusSelected'
   | 'focusScene'
@@ -24,6 +25,22 @@ export type CameraCommand =
 
 export type Vector3Tuple = [number, number, number]
 export type PrimitiveParams = Record<string, number>
+
+export interface WorkplaneState {
+  mode: WorkplaneMode
+  origin: Vector3Tuple
+  normal: Vector3Tuple
+  xAxis: Vector3Tuple
+  label: string
+}
+
+export const WORKSPACE_WORKPLANE: WorkplaneState = {
+  mode: 'workspace',
+  origin: [0, 0, 0],
+  normal: [0, 1, 0],
+  xAxis: [1, 0, 0],
+  label: 'Workspace plane',
+}
 
 export interface ParameterField {
   key: string
