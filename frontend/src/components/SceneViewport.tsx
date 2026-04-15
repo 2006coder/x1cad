@@ -1,4 +1,5 @@
 import {
+  Component,
   Suspense,
   forwardRef,
   useEffect,
@@ -330,6 +331,84 @@ const PrimitiveNode = forwardRef<
   )
 })
 
+class MeshLoadBoundary extends Component<
+  {
+    object: SceneObject & { kind: 'mesh'; type: 'generatedMesh'; meshAssetId: string }
+    selected: boolean
+    wireframe: boolean
+    onSelect: (id: string) => void
+    children: React.ReactNode
+  },
+  { failed: boolean }
+> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  override componentDidCatch(error: Error) {
+    console.error(`Unable to load mesh asset ${this.props.object.meshAssetId}`, error)
+  }
+
+  override componentDidUpdate(
+    prevProps: Readonly<{
+      object: SceneObject & { kind: 'mesh'; type: 'generatedMesh'; meshAssetId: string }
+      selected: boolean
+      wireframe: boolean
+      onSelect: (id: string) => void
+      children: React.ReactNode
+    }>,
+  ) {
+    if (
+      this.state.failed &&
+      (prevProps.object.id !== this.props.object.id ||
+        prevProps.object.meshAssetId !== this.props.object.meshAssetId)
+    ) {
+      this.setState({ failed: false })
+    }
+  }
+
+  override render() {
+    if (this.state.failed) {
+      const { object, onSelect, selected, wireframe } = this.props
+      const groupRotation = object.rotation.map(degreesToRadians) as [number, number, number]
+
+      return (
+        <group
+          position={object.position}
+          rotation={groupRotation}
+          scale={object.scale}
+          onClick={(event) => {
+            event.stopPropagation()
+            onSelect(object.id)
+          }}
+        >
+          <mesh castShadow receiveShadow userData={{ cadSurface: true, cadObjectId: object.id, cadObjectName: object.name }}>
+            <boxGeometry args={[22, 22, 22]} />
+            <meshStandardMaterial
+              color={object.color}
+              emissive={selected ? object.color : '#000000'}
+              emissiveIntensity={selected ? 0.18 : 0}
+              metalness={0.04}
+              opacity={0.5}
+              roughness={0.52}
+              transparent
+              wireframe={wireframe}
+            />
+            {selected ? <Edges color="#f8fafc" scale={1.02} /> : null}
+          </mesh>
+          <Html position={[0, 18, 0]} center distanceFactor={9}>
+            <div className="selection-tag selection-tag--warning">{object.name} unavailable</div>
+          </Html>
+        </group>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
 const GeneratedMeshNode = forwardRef<
   Group,
   {
@@ -438,13 +517,15 @@ const SceneObjectNode = forwardRef<
 >(function SceneObjectNode({ object, selected, wireframe, onSelect }, ref) {
   if (isMeshObject(object)) {
     return (
-      <GeneratedMeshNode
-        ref={ref}
-        object={object}
-        onSelect={onSelect}
-        selected={selected}
-        wireframe={wireframe}
-      />
+      <MeshLoadBoundary object={object} onSelect={onSelect} selected={selected} wireframe={wireframe}>
+        <GeneratedMeshNode
+          ref={ref}
+          object={object}
+          onSelect={onSelect}
+          selected={selected}
+          wireframe={wireframe}
+        />
+      </MeshLoadBoundary>
     )
   }
 

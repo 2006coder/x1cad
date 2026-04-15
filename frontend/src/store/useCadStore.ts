@@ -71,6 +71,59 @@ interface CadState {
 
 const demoScene = buildDemoScene()
 
+function isVector3Tuple(value: unknown): value is Vector3Tuple {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+  )
+}
+
+function sanitizeTuple(value: unknown, fallback: Vector3Tuple): Vector3Tuple {
+  return isVector3Tuple(value) ? value : fallback
+}
+
+function sanitizeWorkplane(value: unknown): WorkplaneState {
+  if (!value || typeof value !== 'object') {
+    return WORKSPACE_WORKPLANE
+  }
+
+  const candidate = value as Partial<WorkplaneState>
+  return {
+    mode: candidate.mode === 'surface' ? 'surface' : 'workspace',
+    origin: sanitizeTuple(candidate.origin, WORKSPACE_WORKPLANE.origin),
+    normal: sanitizeTuple(candidate.normal, WORKSPACE_WORKPLANE.normal),
+    xAxis: sanitizeTuple(candidate.xAxis, WORKSPACE_WORKPLANE.xAxis),
+    label:
+      typeof candidate.label === 'string' && candidate.label.trim()
+        ? candidate.label
+        : WORKSPACE_WORKPLANE.label,
+  }
+}
+
+function sanitizeSceneObject(object: Partial<SceneObject>, index: number): SceneObject {
+  return {
+    id: typeof object.id === 'string' && object.id ? object.id : `recovered-${index}`,
+    kind: object.kind ?? ('primitive' as const),
+    type: object.type ?? 'box',
+    name: typeof object.name === 'string' && object.name ? object.name : `Recovered Object ${index + 1}`,
+    color: typeof object.color === 'string' && object.color ? object.color : '#7dd3fc',
+    params: object.params ?? {},
+    position: sanitizeTuple(object.position, [0, 0, 0]),
+    rotation: sanitizeTuple(object.rotation, [0, 0, 0]),
+    scale: sanitizeTuple(object.scale, [1, 1, 1]),
+    hidden: object.hidden ?? false,
+    locked: object.locked ?? false,
+    source: object.source ?? ('manual' as const),
+    generationPrompt: object.generationPrompt,
+    meshAssetId: object.meshAssetId,
+    meshVertices: object.meshVertices,
+    meshFaces: object.meshFaces,
+    meshOutputMode: object.meshOutputMode,
+    meshWarning: object.meshWarning ?? null,
+  }
+}
+
 function updateTuple(tuple: Vector3Tuple, index: number, value: number): Vector3Tuple {
   return tuple.map((entry, entryIndex) => (entryIndex === index ? value : entry)) as Vector3Tuple
 }
@@ -286,23 +339,38 @@ export const useCadStore = create<CadState>()(
         showOnboarding: state.showOnboarding,
       }),
       version: 4,
+      merge: (persistedState, currentState) => {
+        const state = persistedState as Partial<CadState>
+        const sceneObjects =
+          state.sceneObjects?.map((object, index) => sanitizeSceneObject(object, index)) ??
+          currentState.sceneObjects
+        const selectedObjectId =
+          sceneObjects.some((object) => object.id === state.selectedObjectId)
+            ? state.selectedObjectId ?? null
+            : sceneObjects[0]?.id ?? null
+
+        return {
+          ...currentState,
+          ...state,
+          sceneObjects,
+          selectedObjectId,
+          workplane: sanitizeWorkplane(state.workplane),
+          workplanePlacementActive: false,
+          cameraRequest: currentState.cameraRequest,
+        }
+      },
       migrate: (persistedState) => {
         const state = persistedState as Partial<CadState>
         return {
           sceneObjects:
-            state.sceneObjects?.map((object) => ({
-              ...object,
-              kind: object.kind ?? ('primitive' as const),
-              hidden: object.hidden ?? false,
-              locked: object.locked ?? false,
-              source: object.source ?? ('manual' as const),
-            })) ?? buildDemoScene(),
+            state.sceneObjects?.map((object, index) => sanitizeSceneObject(object, index)) ??
+            buildDemoScene(),
           selectedObjectId: state.selectedObjectId ?? demoScene[0]?.id ?? null,
           activeTool: state.activeTool ?? 'select',
           coordinateSpace: state.coordinateSpace ?? 'world',
           snapIncrement: state.snapIncrement ?? 1,
           viewMode: state.viewMode ?? 'shaded',
-          workplane: state.workplane ?? WORKSPACE_WORKPLANE,
+          workplane: sanitizeWorkplane(state.workplane),
           workplanePlacementActive: false,
           showOnboarding: state.showOnboarding ?? true,
           cameraRequest: { kind: 'focusScene', token: 0 },

@@ -1,3 +1,4 @@
+import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { InspectorPanel } from './components/InspectorPanel'
 import { LeftSidebar } from './components/LeftSidebar'
 import { SceneViewport } from './components/SceneViewport'
@@ -25,33 +26,35 @@ function App() {
   } = useSystemStatus()
 
   return (
-    <div className="app-shell">
-      <div className="background-orb background-orb--left" />
-      <div className="background-orb background-orb--right" />
-      <div className="background-grid" />
+    <AppErrorBoundary>
+      <div className="app-shell">
+        <div className="background-orb background-orb--left" />
+        <div className="background-orb background-orb--right" />
+        <div className="background-grid" />
 
-      <TopBar backendOnline={backendOnline} systemStatus={systemStatus} />
+        <TopBar backendOnline={backendOnline} systemStatus={systemStatus} />
 
-      <div className="workspace-grid">
-        <LeftSidebar />
-        <SceneViewport />
-        <InspectorPanel
-          backendOnline={backendOnline}
-          downloadModels={downloadModels}
-          error={error}
-          installRuntime={installRuntime}
-          loading={loading}
-          modelStatus={modelStatus}
-          refreshStatus={refresh}
-          selectedObject={selectedObject}
-          systemStatus={systemStatus}
-        />
+        <div className="workspace-grid">
+          <LeftSidebar />
+          <SceneViewport />
+          <InspectorPanel
+            backendOnline={backendOnline}
+            downloadModels={downloadModels}
+            error={error}
+            installRuntime={installRuntime}
+            loading={loading}
+            modelStatus={modelStatus}
+            refreshStatus={refresh}
+            selectedObject={selectedObject}
+            systemStatus={systemStatus}
+          />
+        </div>
+
+        <StatusBar backendOnline={backendOnline} systemStatus={systemStatus} />
+
+        {showOnboarding ? <WelcomeOverlay systemStatus={systemStatus} /> : null}
       </div>
-
-      <StatusBar backendOnline={backendOnline} systemStatus={systemStatus} />
-
-      {showOnboarding ? <WelcomeOverlay systemStatus={systemStatus} /> : null}
-    </div>
+    </AppErrorBoundary>
   )
 }
 
