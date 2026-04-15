@@ -20,6 +20,7 @@ import type {
 } from '../types/cad'
 import { WORKSPACE_WORKPLANE } from '../types/cad'
 import type { GenerationResult } from '../types/system'
+import { createObjectId } from '../utils/objectId'
 
 interface CameraRequest {
   kind: CameraCommand
@@ -242,7 +243,7 @@ export const useCadStore = create<CadState>()(
 
           const duplicate = {
             ...target,
-            id: `${target.type}-${crypto.randomUUID()}`,
+            id: createObjectId(target.type),
             name: `${target.name} Copy`,
             position: [
               target.position[0] + 12,

@@ -1,5 +1,6 @@
 import type { GenerationResult } from '../types/system'
 import { Euler, MathUtils, Matrix4, Quaternion, Vector3 } from 'three'
+import { createObjectId } from '../utils/objectId'
 import {
   WORKSPACE_WORKPLANE,
   isMeshObject,
@@ -333,7 +334,7 @@ export function createSceneObject(
   const params = { ...definition.defaults }
 
   return {
-    id: `${type}-${crypto.randomUUID()}`,
+    id: createObjectId(type),
     kind: 'primitive',
     type,
     name: `${definition.label} ${existingCount + 1}`,
@@ -354,7 +355,7 @@ export function createSceneObjectFromAiResult(
   workplane?: WorkplaneState | null,
 ): SceneObject {
   return {
-    id: `generatedMesh-${crypto.randomUUID()}`,
+    id: createObjectId('generatedMesh'),
     kind: 'mesh',
     type: 'generatedMesh',
     name: result.preview_name,
@@ -388,7 +389,7 @@ export function createSceneObjectFromAiSuggestion(
   const params = { ...definition.defaults, ...result.suggested_params }
 
   return {
-    id: `${result.suggested_primitive}-${crypto.randomUUID()}`,
+    id: createObjectId(result.suggested_primitive),
     kind: 'primitive',
     type: result.suggested_primitive,
     name: `${result.preview_name} Proxy`,
