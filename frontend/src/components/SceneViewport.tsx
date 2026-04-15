@@ -634,7 +634,6 @@ export function SceneViewport() {
 
   const selectedObject = sceneObjects.find((object) => object.id === selectedObjectId) ?? null
   const selectedObjectVisible = selectedObject && !selectedObject.hidden ? selectedObject : null
-  const selectedObjectVisibleId = selectedObjectVisible?.id
   const estimatedTriangles = visibleObjects.reduce(
     (total, object) => total + estimateSceneObjectTriangles(object),
     0,
@@ -676,14 +675,6 @@ export function SceneViewport() {
     workplaneBasis.makeBasis(workplaneXAxis, workplaneNormal, workplaneZAxis)
     return new Quaternion().setFromRotationMatrix(workplaneBasis)
   }, [workplane])
-
-  useEffect(() => {
-    if (!selectedObjectVisibleId) {
-      return
-    }
-
-    requestCamera('focusSelected')
-  }, [requestCamera, selectedObjectVisibleId])
 
   function pickSurfaceAtClientPoint(clientX: number, clientY: number) {
     const { camera, canvas } = viewportBridgeRef.current
@@ -1011,7 +1002,6 @@ export function SceneViewport() {
           makeDefault
           maxDistance={720}
           minDistance={12}
-          target={selectedObjectVisible?.position ?? [0, 10, 0]}
         />
       </Canvas>
 

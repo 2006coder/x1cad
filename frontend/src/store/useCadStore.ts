@@ -148,6 +148,10 @@ export const useCadStore = create<CadState>()(
           return {
             sceneObjects: [...state.sceneObjects, nextObject],
             selectedObjectId: nextObject.id,
+            cameraRequest: {
+              kind: 'focusSelected',
+              token: state.cameraRequest.token + 1,
+            },
           }
         }),
       addGeneratedObject: (result) =>
@@ -257,6 +261,10 @@ export const useCadStore = create<CadState>()(
           return {
             sceneObjects: [...state.sceneObjects, duplicate],
             selectedObjectId: duplicate.id,
+            cameraRequest: {
+              kind: 'focusSelected',
+              token: state.cameraRequest.token + 1,
+            },
           }
         }),
       deleteSelected: () =>
@@ -276,13 +284,17 @@ export const useCadStore = create<CadState>()(
         }),
       loadDemoScene: () => {
         const nextScene = buildDemoScene()
-        set({
+        set((state) => ({
           sceneObjects: nextScene,
           selectedObjectId: nextScene[0]?.id ?? null,
           workplane: WORKSPACE_WORKPLANE,
           workplanePlacementActive: false,
           showOnboarding: true,
-        })
+          cameraRequest: {
+            kind: 'focusScene',
+            token: state.cameraRequest.token + 1,
+          },
+        }))
       },
       dismissOnboarding: () => set({ showOnboarding: false }),
       openOnboarding: () => set({ showOnboarding: true }),
